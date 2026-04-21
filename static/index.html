@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>KEF Gate D Flights</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      min-height: 100vh;
+    }
+
+    .header {
+      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+      border-bottom: 2px solid #334155;
+      padding: 20px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-wrap: wrap;
+      gap: 12px;
+    }
+
+    .header h1 {
+      font-size: 1.5rem;
+      font-weight: 700;
+      color: #f8fafc;
+    }
+
+    .header h1 span { color: #38bdf8; }
+
+    .header-info {
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      font-size: 0.85rem;
+      color: #94a3b8;
+    }
+
+    .live-dot {
+      width: 8px; height: 8px;
+      background: #22c55e;
+      border-radius: 50%;
+      display: inline-block;
+      animation: pulse 2s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    .tabs {
+      display: flex;
+      padding: 0 24px;
+      gap: 0;
+      background: #1e293b;
+      border-bottom: 1px solid #334155;
+    }
+
+    .tab {
+      padding: 14px 24px;
+      cursor: pointer;
+      font-size: 0.95rem;
+      font-weight: 600;
+      color: #94a3b8;
+      border-bottom: 3px solid transparent;
+      transition: all 0.2s;
+      user-select: none;
+    }
+
+    .tab:hover { color: #cbd5e1; }
+    .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
+
+    .tab .badge {
+      background: #334155;
+      color: #94a3b8;
+      font-size: 0.75rem;
+      padding: 2px 8px;
+      border-radius: 10px;
+      margin-left: 8px;
+    }
+
+    .tab.active .badge { background: #0c4a6e; color: #38bdf8; }
+
+    .content { padding: 20px 24px; }
+
+    .table-wrapper {
+      overflow-x: auto;
+      border-radius: 8px;
+      border: 1px solid #334155;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 0.9rem;
+    }
+
+    thead th {
+      background: #1e293b;
+      padding: 12px 16px;
+      text-align: left;
+      font-weight: 600;
+      color: #94a3b8;
+      text-transform: uppercase;
+      font-size: 0.75rem;
+      letter-spacing: 0.05em;
+      border-bottom: 1px solid #334155;
+      white-space: nowrap;
+    }
+
+    tbody td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #1e293b;
+      white-space: nowrap;
+    }
+
+    tbody tr:hover { background: #1e293b; }
+
+    .flight-num { font-weight: 700; color: #f8fafc; }
+    .gate-num { font-weight: 700; color: #a78bfa; }
+    .time { font-variant-numeric: tabular-nums; }
+
+    .status {
+      display: inline-block;
+      padding: 3px 10px;
+      border-radius: 12px;
+      font-size: 0.75rem;
+      font-weight: 600;
+      text-transform: uppercase;
+    }
+
+    .status-landed { background: #064e3b; color: #6ee7b7; }
+    .status-departed { background: #0c4a6e; color: #7dd3fc; }
+    .status-estimated { background: #422006; color: #fbbf24; }
+    .status-cancelled { background: #450a0a; color: #fca5a5; }
+    .status-default { background: #334155; color: #94a3b8; }
+
+    .loading {
+      text-align: center;
+      padding: 60px;
+      color: #64748b;
+      font-size: 1.1rem;
+    }
+
+    .loading .spinner {
+      width: 40px; height: 40px;
+      border: 3px solid #334155;
+      border-top-color: #38bdf8;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+      margin: 0 auto 16px;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error {
+      text-align: center;
+      padding: 60px;
+      color: #f87171;
+    }
+
+    .empty {
+      text-align: center;
+      padding: 40px;
+      color: #64748b;
+    }
+
+    @media (max-width: 640px) {
+      .header h1 { font-size: 1.2rem; }
+      .tab { padding: 12px 16px; font-size: 0.85rem; }
+      tbody td, thead th { padding: 10px 12px; font-size: 0.8rem; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <h1>✈️ KEF <span>Gate D</span> Flights</h1>
+    <div class="header-info">
+      <span><span class="live-dot"></span> Live — refreshes every 15s</span>
+      <span id="updated"></span>
+    </div>
+  </div>
+
+  <div class="tabs">
+    <div class="tab active" data-tab="arrivals" onclick="switchTab('arrivals')">
+      🛬 Arrivals <span class="badge" id="arr-count">0</span>
+    </div>
+    <div class="tab" data-tab="departures" onclick="switchTab('departures')">
+      🛫 Departures <span class="badge" id="dep-count">0</span>
+    </div>
+  </div>
+
+  <div class="content">
+    <div id="loading" class="loading">
+      <div class="spinner"></div>
+      Loading flight data...
+    </div>
+    <div id="error" class="error" style="display:none;"></div>
+    <div id="table-area" style="display:none;"></div>
+  </div>
+
+  <script>
+    let currentTab = 'arrivals';
+    let flightData = null;
+    let firstLoad = true;
+
+    function statusClass(status) {
+      const s = (status || '').toLowerCase();
+      if (s.includes('land')) return 'status-landed';
+      if (s.includes('depart')) return 'status-departed';
+      if (s.includes('estimat')) return 'status-estimated';
+      if (s.includes('cancel')) return 'status-cancelled';
+      return 'status-default';
+    }
+
+    function renderTable() {
+      if (!flightData) return;
+
+      const area = document.getElementById('table-area');
+      const flights = currentTab === 'arrivals' ? flightData.arrivals : flightData.departures;
+
+      document.getElementById('arr-count').textContent = flightData.arrivals.length;
+      document.getElementById('dep-count').textContent = flightData.departures.length;
+
+      if (flights.length === 0) {
+        area.innerHTML = '<div class="empty">No Gate D flights found</div>';
+        return;
+      }
+
+      const isArr = currentTab === 'arrivals';
+      let html = '<div class="table-wrapper"><table><thead><tr>';
+      html += '<th>Flight</th>';
+      html += isArr ? '<th>Origin</th>' : '<th>Destination</th>';
+      html += isArr ? '<th>STA</th><th>ETA</th>' : '<th>STD</th><th>ETD</th>';
+      html += '<th>Status</th><th>Gate</th>';
+      if (isArr) html += '<th>Belt</th>';
+      html += '</tr></thead><tbody>';
+
+      for (const f of flights) {
+        html += '<tr>';
+        html += `<td class="flight-num">${f.flight}</td>`;
+        html += `<td>${isArr ? f.origin : f.destination}</td>`;
+        html += `<td class="time">${isArr ? f.sta : f.std}</td>`;
+        html += `<td class="time">${isArr ? (f.eta || '—') : (f.etd || '—')}</td>`;
+        const st = f.status || '—';
+        html += `<td><span class="status ${statusClass(st)}">${st || '—'}</span></td>`;
+        html += `<td class="gate-num">${f.gate}</td>`;
+        if (isArr) html += `<td>${f.belt || '—'}</td>`;
+        html += '</tr>';
+      }
+
+      html += '</tbody></table></div>';
+      area.innerHTML = html;
+    }
+
+    function switchTab(tab) {
+      currentTab = tab;
+      document.querySelectorAll('.tab').forEach(t => {
+        t.classList.toggle('active', t.dataset.tab === tab);
+      });
+      renderTable();
+    }
+
+    async function fetchFlights() {
+      try {
+        const resp = await fetch('/api/flights');
+        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+        flightData = await resp.json();
+
+        if (firstLoad) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('table-area').style.display = 'block';
+          firstLoad = false;
+        }
+
+        document.getElementById('error').style.display = 'none';
+        document.getElementById('updated').textContent = 'Updated: ' + flightData.updated;
+        renderTable();
+      } catch (e) {
+        if (firstLoad) {
+          document.getElementById('loading').style.display = 'none';
+          document.getElementById('error').style.display = 'block';
+          document.getElementById('error').textContent = '❌ Failed to load flights: ' + e.message;
+        }
+        console.error('Fetch error:', e);
+      }
+    }
+
+    // Initial load + auto-refresh every 15 seconds
+    fetchFlights();
+    setInterval(fetchFlights, 15000);
+  </script>
+</body>
+</html>
