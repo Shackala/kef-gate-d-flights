@@ -1,300 +1,257 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="is" data-theme="dark">
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Flugupplýsingar - Hlið D</title>
+  <title>Keflavíkurflugvöllur — Hlið D</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
   <style>
-    * { margin: 0; padding: 0; box-sizing: border-box; }
-
-    body {
-      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-      background: #0f172a;
-      color: #e2e8f0;
-      min-height: 100vh;
-    }
-
-    .header {
-      background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
-      border-bottom: 2px solid #334155;
-      padding: 20px 24px;
-      display: flex;
-      align-items: center;
-      justify-content: space-between;
-      flex-wrap: wrap;
-      gap: 12px;
-    }
-
-    .header h1 {
-      font-size: 1.5rem;
-      font-weight: 700;
-      color: #f8fafc;
-    }
-
-    .header h1 span { color: #38bdf8; }
-
-    .header-info {
-      display: flex;
-      align-items: center;
-      gap: 16px;
-      font-size: 0.85rem;
-      color: #94a3b8;
-    }
-
-    .live-dot {
-      width: 8px; height: 8px;
-      background: #22c55e;
-      border-radius: 50%;
-      display: inline-block;
-      animation: pulse 2s infinite;
-    }
-
-    @keyframes pulse {
-      0%, 100% { opacity: 1; }
-      50% { opacity: 0.4; }
-    }
-
-    .tabs {
-      display: flex;
-      padding: 0 24px;
-      gap: 0;
-      background: #1e293b;
-      border-bottom: 1px solid #334155;
-    }
-
-    .tab {
-      padding: 14px 24px;
-      cursor: pointer;
-      font-size: 0.95rem;
-      font-weight: 600;
-      color: #94a3b8;
-      border-bottom: 3px solid transparent;
-      transition: all 0.2s;
-      user-select: none;
-    }
-
-    .tab:hover { color: #cbd5e1; }
-    .tab.active { color: #38bdf8; border-bottom-color: #38bdf8; }
-
-    .tab .badge {
-      background: #334155;
-      color: #94a3b8;
-      font-size: 0.75rem;
-      padding: 2px 8px;
-      border-radius: 10px;
-      margin-left: 8px;
-    }
-
-    .tab.active .badge { background: #0c4a6e; color: #38bdf8; }
-
-    .content { padding: 20px 24px; }
-
-    .table-wrapper {
-      overflow-x: auto;
-      border-radius: 8px;
-      border: 1px solid #334155;
-    }
-
-    table {
-      width: 100%;
-      border-collapse: collapse;
-      font-size: 0.9rem;
-    }
-
-    thead th {
-      background: #1e293b;
-      padding: 12px 16px;
-      text-align: left;
-      font-weight: 600;
-      color: #94a3b8;
-      text-transform: uppercase;
-      font-size: 0.75rem;
-      letter-spacing: 0.05em;
-      border-bottom: 1px solid #334155;
-      white-space: nowrap;
-    }
-
-    tbody td {
-      padding: 12px 16px;
-      border-bottom: 1px solid #1e293b;
-      white-space: nowrap;
-    }
-
-    tbody tr:hover { background: #1e293b; }
-
-    .flight-num { font-weight: 700; color: #f8fafc; }
-    .gate-num { font-weight: 700; color: #a78bfa; }
-    .time { font-variant-numeric: tabular-nums; }
-
-    .status {
-      display: inline-block;
-      padding: 3px 10px;
-      border-radius: 12px;
-      font-size: 0.75rem;
-      font-weight: 600;
-      text-transform: uppercase;
-    }
-
-    .status-landed { background: #064e3b; color: #6ee7b7; }
-    .status-departed { background: #0c4a6e; color: #7dd3fc; }
-    .status-estimated { background: #422006; color: #fbbf24; }
-    .status-cancelled { background: #450a0a; color: #fca5a5; }
-    .status-default { background: #334155; color: #94a3b8; }
-
-    .loading {
-      text-align: center;
-      padding: 60px;
-      color: #64748b;
-      font-size: 1.1rem;
-    }
-
-    .loading .spinner {
-      width: 40px; height: 40px;
-      border: 3px solid #334155;
-      border-top-color: #38bdf8;
-      border-radius: 50%;
-      animation: spin 0.8s linear infinite;
-      margin: 0 auto 16px;
-    }
-
-    @keyframes spin { to { transform: rotate(360deg); } }
-
-    .error {
-      text-align: center;
-      padding: 60px;
-      color: #f87171;
-    }
-
-    .empty {
-      text-align: center;
-      padding: 40px;
-      color: #64748b;
-    }
-
-    @media (max-width: 640px) {
-      .header h1 { font-size: 1.2rem; }
-      .tab { padding: 12px 16px; font-size: 0.85rem; }
-      tbody td, thead th { padding: 10px 12px; font-size: 0.8rem; }
-    }
+    body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .refresh-spin { animation: spin 1s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
   </style>
 </head>
-<body>
-  <div class="header">
-    <h1>✈️ KEF <span>Flug</span> D Hlið</h1>
-    <div class="header-info">
-      <span><span class="live-dot"></span> Live — refreshes every 15s</span>
-      <span id="updated"></span>
+<body class="min-h-screen bg-base-100 p-4">
+
+  <div class="max-w-5xl mx-auto flex flex-col gap-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">✈️</span>
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Keflavíkurflugvöllur — Hlið D</h1>
+          <p id="lastUpdated" class="text-xs text-base-content/50"></p>
+        </div>
+      </div>
+      <button id="refreshBtn" class="btn btn-sm btn-outline btn-primary gap-1" onclick="manualRefresh()">
+        <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+          <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+        </svg>
+        Endurhlaða
+      </button>
+    </div>
+
+    <!-- Error -->
+    <div id="errorBox" class="alert alert-error text-sm hidden"><span id="errorMsg"></span></div>
+
+    <!-- Tabs -->
+    <div role="tablist" class="tabs tabs-bordered">
+      <button role="tab" class="tab gap-2 tab-active font-semibold" data-tab="arrivals" onclick="switchTab('arrivals')">
+        🛬 Komur <span id="arrCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" data-tab="departures" onclick="switchTab('departures')">
+        🛫 Brottfarir <span id="depCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" data-tab="heimavellir" onclick="switchTab('heimavellir')">
+        🏠 Heimavellir <span id="heimCount" class="badge badge-sm">0</span>
+      </button>
+    </div>
+
+    <!-- Loading -->
+    <div id="loadingBox" class="flex items-center justify-center py-16">
+      <span class="loading loading-spinner loading-lg text-primary"></span>
+    </div>
+
+    <!-- Arrivals table -->
+    <div id="arrivalsPanel" class="hidden fade-in">
+      <div class="overflow-x-auto">
+        <table class="table table-sm table-zebra w-full">
+          <thead>
+            <tr class="text-xs uppercase tracking-wider">
+              <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Hlið</th>
+            </tr>
+          </thead>
+          <tbody id="arrivalsBody"></tbody>
+        </table>
+      </div>
+      <div id="arrivalsEmpty" class="text-center py-12 text-base-content/50 hidden">Engar komur á Hlið D.</div>
+    </div>
+
+    <!-- Departures table -->
+    <div id="departuresPanel" class="hidden fade-in">
+      <div class="overflow-x-auto">
+        <table class="table table-sm table-zebra w-full">
+          <thead>
+            <tr class="text-xs uppercase tracking-wider">
+              <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+            </tr>
+          </thead>
+          <tbody id="departuresBody"></tbody>
+        </table>
+      </div>
+      <div id="departuresEmpty" class="text-center py-12 text-base-content/50 hidden">Engar brottfarir á Hlið D.</div>
+    </div>
+
+    <!-- Heimavellir panel -->
+    <div id="heimavellirPanel" class="hidden fade-in">
+      <!-- Morning -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🌅 Morgunflug (06:00 – 12:00)
+          <span id="morningCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+              </tr>
+            </thead>
+            <tbody id="morningBody"></tbody>
+          </table>
+        </div>
+        <div id="morningEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engin FI flug á þessu tímabili.</div>
+      </div>
+      <!-- Afternoon -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🌇 Síðdegisflug (13:00 – 22:00)
+          <span id="afternoonCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+              </tr>
+            </thead>
+            <tbody id="afternoonBody"></tbody>
+          </table>
+        </div>
+        <div id="afternoonEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engin FI flug á þessu tímabili.</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="text-xs text-center text-base-content/40 mt-auto pt-4">
+      Gögn sótt af kefairport.is/fids • Síað eftir Hlið D
     </div>
   </div>
 
-  <div class="tabs">
-    <div class="tab active" data-tab="arrivals" onclick="switchTab('arrivals')">
-      🛬 Komur <span class="badge" id="arr-count">0</span>
-    </div>
-    <div class="tab" data-tab="departures" onclick="switchTab('departures')">
-      🛫 Brottfarir <span class="badge" id="dep-count">0</span>
-    </div>
-  </div>
+<script>
+  let currentTab = 'arrivals';
+  let firstLoad = true;
 
-  <div class="content">
-    <div id="loading" class="loading">
-      <div class="spinner"></div>
-      Loading flight data...
-    </div>
-    <div id="error" class="error" style="display:none;"></div>
-    <div id="table-area" style="display:none;"></div>
-  </div>
+  function statusBadge(status) {
+    if (!status) return '<span class="text-base-content/40">—</span>';
+    const s = status.toLowerCase();
+    let cls = 'badge badge-sm ';
+    if (s.includes('landed')) cls += 'badge-success';
+    else if (s.includes('departed')) cls += 'badge-info';
+    else if (s.includes('estimated')) cls += 'badge-warning';
+    else if (s.includes('cancelled') || s.includes('canceled')) cls += 'badge-error';
+    else cls += 'badge-ghost';
+    return `<span class="${cls}">${status}</span>`;
+  }
 
-  <script>
-    let currentTab = 'arrivals';
-    let flightData = null;
-    let firstLoad = true;
+  function depRow(f) {
+    return `<tr>
+      <td class="font-mono font-semibold">${f.flight}</td>
+      <td>${f.destination}</td>
+      <td class="font-mono">${f.std || '—'}</td>
+      <td class="font-mono">${f.etd || '—'}</td>
+      <td>${statusBadge(f.status)}</td>
+      <td class="font-mono font-semibold">${f.gate}</td>
+    </tr>`;
+  }
 
-    function statusClass(status) {
-      const s = (status || '').toLowerCase();
-      if (s.includes('land')) return 'status-landed';
-      if (s.includes('depart')) return 'status-departed';
-      if (s.includes('estimat')) return 'status-estimated';
-      if (s.includes('cancel')) return 'status-cancelled';
-      return 'status-default';
-    }
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('[data-tab]').forEach(btn => {
+      btn.classList.toggle('tab-active', btn.dataset.tab === tab);
+      btn.classList.toggle('font-semibold', btn.dataset.tab === tab);
+    });
+    document.getElementById('arrivalsPanel').classList.toggle('hidden', tab !== 'arrivals');
+    document.getElementById('departuresPanel').classList.toggle('hidden', tab !== 'departures');
+    document.getElementById('heimavellirPanel').classList.toggle('hidden', tab !== 'heimavellir');
+  }
 
-    function renderTable() {
-      if (!flightData) return;
+  async function fetchFlights(showLoading) {
+    if (showLoading) document.getElementById('loadingBox').classList.remove('hidden');
+    const icon = document.getElementById('refreshIcon');
+    icon.classList.add('refresh-spin');
+    document.getElementById('errorBox').classList.add('hidden');
 
-      const area = document.getElementById('table-area');
-      const flights = currentTab === 'arrivals' ? flightData.arrivals : flightData.departures;
+    try {
+      const res = await fetch('/api/flights');
+      if (!res.ok) throw new Error('Server error');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
 
-      document.getElementById('arr-count').textContent = flightData.arrivals.length;
-      document.getElementById('dep-count').textContent = flightData.departures.length;
-
-      if (flights.length === 0) {
-        area.innerHTML = '<div class="empty">No Gate D flights found</div>';
-        return;
+      // Arrivals
+      const arrBody = document.getElementById('arrivalsBody');
+      const arrEmpty = document.getElementById('arrivalsEmpty');
+      if (data.arrivals.length === 0) {
+        arrBody.innerHTML = '';
+        arrEmpty.classList.remove('hidden');
+      } else {
+        arrEmpty.classList.add('hidden');
+        arrBody.innerHTML = data.arrivals.map(f => `<tr>
+          <td class="font-mono font-semibold">${f.flight}</td>
+          <td>${f.origin}</td>
+          <td class="font-mono">${f.sta || '—'}</td>
+          <td class="font-mono">${f.eta || '—'}</td>
+          <td>${statusBadge(f.status)}</td>
+          <td class="font-mono font-semibold">${f.gate}</td>
+        </tr>`).join('');
       }
+      document.getElementById('arrCount').textContent = data.arrivals.length;
 
-      const isArr = currentTab === 'arrivals';
-      let html = '<div class="table-wrapper"><table><thead><tr>';
-      html += '<th>Flight</th>';
-      html += isArr ? '<th>Origin</th>' : '<th>Destination</th>';
-      html += isArr ? '<th>STA</th><th>ETA</th>' : '<th>STD</th><th>ETD</th>';
-      html += '<th>Status</th><th>Gate</th>';
-      if (isArr) html += '<th>Belt</th>';
-      html += '</tr></thead><tbody>';
-
-      for (const f of flights) {
-        html += '<tr>';
-        html += `<td class="flight-num">${f.flight}</td>`;
-        html += `<td>${isArr ? f.origin : f.destination}</td>`;
-        html += `<td class="time">${isArr ? f.sta : f.std}</td>`;
-        html += `<td class="time">${isArr ? (f.eta || '—') : (f.etd || '—')}</td>`;
-        const st = f.status || '—';
-        html += `<td><span class="status ${statusClass(st)}">${st || '—'}</span></td>`;
-        html += `<td class="gate-num">${f.gate}</td>`;
-        if (isArr) html += `<td>${f.belt || '—'}</td>`;
-        html += '</tr>';
+      // Departures
+      const depBody = document.getElementById('departuresBody');
+      const depEmpty = document.getElementById('departuresEmpty');
+      if (data.departures.length === 0) {
+        depBody.innerHTML = '';
+        depEmpty.classList.remove('hidden');
+      } else {
+        depEmpty.classList.add('hidden');
+        depBody.innerHTML = data.departures.map(depRow).join('');
       }
+      document.getElementById('depCount').textContent = data.departures.length;
 
-      html += '</tbody></table></div>';
-      area.innerHTML = html;
-    }
+      // Heimavellir
+      const heim = data.heimavellir || { morning: [], afternoon: [] };
+      const mBody = document.getElementById('morningBody');
+      const mEmpty = document.getElementById('morningEmpty');
+      const aBody = document.getElementById('afternoonBody');
+      const aEmpty = document.getElementById('afternoonEmpty');
 
-    function switchTab(tab) {
-      currentTab = tab;
-      document.querySelectorAll('.tab').forEach(t => {
-        t.classList.toggle('active', t.dataset.tab === tab);
-      });
-      renderTable();
-    }
+      if (heim.morning.length === 0) { mBody.innerHTML = ''; mEmpty.classList.remove('hidden'); }
+      else { mEmpty.classList.add('hidden'); mBody.innerHTML = heim.morning.map(depRow).join(''); }
 
-    async function fetchFlights() {
-      try {
-        const resp = await fetch('/api/flights');
-        if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
-        flightData = await resp.json();
+      if (heim.afternoon.length === 0) { aBody.innerHTML = ''; aEmpty.classList.remove('hidden'); }
+      else { aEmpty.classList.add('hidden'); aBody.innerHTML = heim.afternoon.map(depRow).join(''); }
 
-        if (firstLoad) {
-          document.getElementById('loading').style.display = 'none';
-          document.getElementById('table-area').style.display = 'block';
-          firstLoad = false;
-        }
+      document.getElementById('morningCount').textContent = heim.morning.length;
+      document.getElementById('afternoonCount').textContent = heim.afternoon.length;
+      document.getElementById('heimCount').textContent = heim.morning.length + heim.afternoon.length;
 
-        document.getElementById('error').style.display = 'none';
-        document.getElementById('updated').textContent = 'Updated: ' + flightData.updated;
-        renderTable();
-      } catch (e) {
-        if (firstLoad) {
-          document.getElementById('loading').style.display = 'none';
-          document.getElementById('error').style.display = 'block';
-          document.getElementById('error').textContent = '❌ Failed to load flights: ' + e.message;
-        }
-        console.error('Fetch error:', e);
+      // Updated time
+      document.getElementById('lastUpdated').textContent = 'Síðast uppfært: ' + (data.updated || '');
+
+    } catch (e) {
+      document.getElementById('errorMsg').textContent = e.message;
+      document.getElementById('errorBox').classList.remove('hidden');
+    } finally {
+      document.getElementById('loadingBox').classList.add('hidden');
+      icon.classList.remove('refresh-spin');
+      if (firstLoad) {
+        firstLoad = false;
+        switchTab('arrivals');
+        document.getElementById('arrivalsPanel').classList.remove('hidden');
       }
     }
+  }
 
-    // Initial load + auto-refresh every 15 seconds
-    fetchFlights();
-    setInterval(fetchFlights, 15000);
-  </script>
+  function manualRefresh() { fetchFlights(false); }
+
+  // Initial load + auto-refresh
+  fetchFlights(true);
+  setInterval(() => fetchFlights(false), 15000);
+</script>
 </body>
 </html>
