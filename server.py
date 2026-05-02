@@ -1,6 +1,6 @@
 """
 KEF Gate D Flights — Python Backend
-Scrapes kefairport.is/fids and serves Gate D arrivals & departures as JSON.
+Scrapes kefairport.is/fids and serves Gate D arrivals, departures & Heimavellir as JSON.
 """
 
 import re
@@ -38,6 +38,7 @@ def scrape_flights():
 
     arrivals = []
     departures = []
+    all_departures_raw = []  # All departures before gate filter (for FI filtering)
 
     for table in tables:
         rows = table.find_all("tr")
@@ -46,12 +47,10 @@ def scrape_flights():
 
         headers = [th.get_text(strip=True).lower() for th in rows[0].find_all(["th", "td"])]
 
-        # Determine if arrivals or departures by column names
         is_arrival = "origin" in headers or "sta" in headers or "belt" in headers
         is_departure = "destination" in headers or "std" in headers
 
         if not is_arrival and not is_departure:
-            # Try to determine from surrounding text
             prev_text = ""
             prev = table.find_previous(["h1", "h2", "h3", "h4", "p", "div", "span"])
             if prev:
@@ -69,12 +68,10 @@ def scrape_flights():
                 continue
 
             cell_map = dict(zip(headers, cells))
-
             gate = cell_map.get("gate", "")
-            if not re.match(r"^D\d*", gate, re.IGNORECASE):
-                continue
+            is_gate_d = bool(re.match(r"^D\d*", gate, re.IGNORECASE))
 
-            if is_arrival:
+            if is_arrival and is_gate_d:
                 arrivals.append({
                     "flight": cell_map.get("flight", ""),
                     "origin": cell_map.get("origin", ""),
@@ -85,18 +82,54 @@ def scrape_flights():
                     "belt": cell_map.get("belt", ""),
                 })
             elif is_departure:
-                departures.append({
+                dep_entry = {
                     "flight": cell_map.get("flight", ""),
                     "destination": cell_map.get("destination", ""),
                     "std": cell_map.get("std", ""),
                     "etd": cell_map.get("etd", ""),
                     "status": cell_map.get("status", ""),
                     "gate": gate,
-                })
+                }
+                if is_gate_d:
+                    departures.append(dep_entry)
+                # Collect all departures for FI filtering
+                all_departures_raw.append({**dep_entry, "is_gate_d": is_gate_d})
+
+    # Heimavellir: FI flights at Gate D, split by time
+    fi_morning = []
+    fi_afternoon = []
+    for d in all_departures_raw:
+        flight = d.get("flight", "").upper()
+        if not flight.startswith("FI"):
+            continue
+        if not d.get("is_gate_d"):
+            continue
+        # Parse STD time for filtering
+        std = d.get("std", "")
+        try:
+            hour = int(std.split(":")[0])
+        except (ValueError, IndexError):
+            continue
+        entry = {
+            "flight": d["flight"],
+            "destination": d["destination"],
+            "std": d["std"],
+            "etd": d["etd"],
+            "status": d["status"],
+            "gate": d["gate"],
+        }
+        if 6 <= hour <= 12:
+            fi_morning.append(entry)
+        elif 13 <= hour <= 22:
+            fi_afternoon.append(entry)
 
     return {
         "arrivals": arrivals,
         "departures": departures,
+        "heimavellir": {
+            "morning": fi_morning,
+            "afternoon": fi_afternoon,
+        },
         "updated": time.strftime("%H:%M:%S %Z"),
     }
 
