@@ -123,6 +123,20 @@ def scrape_flights():
         elif 13 <= hour <= 22:
             fi_afternoon.append(entry)
 
+    # Deduplicate morning flights by flight number, remove departed/airborne
+    seen = set()
+    deduped_morning = []
+    for f in fi_morning:
+        num = f["flight"].strip().upper()
+        status = f.get("status", "").lower()
+        if num in seen:
+            continue
+        if "departed" in status or "airborne" in status:
+            continue
+        seen.add(num)
+        deduped_morning.append(f)
+    fi_morning = deduped_morning
+
     return {
         "arrivals": arrivals,
         "departures": departures,
