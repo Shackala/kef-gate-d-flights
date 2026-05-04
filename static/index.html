@@ -145,7 +145,9 @@
 <script>
   let currentTab = 'arrivals';
   let firstLoad = true;
-  let darkMode = true;
+  let darkMode = (function() { try { const s = localStorage.getItem('kef-theme'); return s !== null ? s === 'dark' : true; } catch { return true; } })();
+  // Apply saved theme on load
+  document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
 
   function toggleTheme() {
     darkMode = !darkMode;
@@ -153,7 +155,14 @@
     document.getElementById('themeIconSun').style.display = darkMode ? '' : 'none';
     document.getElementById('themeIconMoon').style.display = darkMode ? 'none' : '';
     document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
+    try { localStorage.setItem('kef-theme', darkMode ? 'dark' : 'light'); } catch {}
   }
+  // Sync icons on load
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('themeIconSun').style.display = darkMode ? '' : 'none';
+    document.getElementById('themeIconMoon').style.display = darkMode ? 'none' : '';
+    document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
+  });
 
   function statusBadge(status) {
     if (!status) return '<span class="text-base-content/40">—</span>';
