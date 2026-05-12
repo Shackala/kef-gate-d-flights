@@ -61,6 +61,12 @@
       </button>
     </div>
 
+    <!-- Color legend -->
+    <div id="colorLegend" class="hidden flex gap-4 text-xs text-base-content/70 px-1">
+      <span class="flex items-center gap-1"><span class="text-error font-bold">●</span> Eftir áætlun</span>
+      <span class="flex items-center gap-1"><span class="text-success font-bold">●</span> Undan áætlun</span>
+    </div>
+
     <!-- Loading -->
     <div id="loadingBox" class="flex items-center justify-center py-16">
       <span class="loading loading-spinner loading-lg text-primary"></span>
@@ -164,6 +170,14 @@
     document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
   });
 
+  function getRowColor(scheduled, estimated) {
+    if (!scheduled || !estimated) return '';
+    const toMin = t => { const p = t.match(/(\d{1,2}):(\d{2})/); return p ? parseInt(p[1])*60+parseInt(p[2]) : NaN; };
+    const s = toMin(scheduled), e = toMin(estimated);
+    if (isNaN(s) || isNaN(e) || s === e) return '';
+    return e > s ? 'color: oklch(var(--er));' : 'color: oklch(var(--su));';
+  }
+
   function statusBadge(status) {
     if (!status) return '<span class="text-base-content/40">—</span>';
     const s = status.toLowerCase();
@@ -177,7 +191,8 @@
   }
 
   function depRow(f) {
-    return `<tr>
+    const rc = getRowColor(f.std, f.etd);
+    return `<tr style="${rc}">
       <td class="font-mono font-semibold">${f.flight}</td>
       <td>${f.destination}</td>
       <td class="font-mono">${f.std || '—'}</td>
@@ -218,14 +233,14 @@
         arrEmpty.classList.remove('hidden');
       } else {
         arrEmpty.classList.add('hidden');
-        arrBody.innerHTML = data.arrivals.map(f => `<tr>
+        arrBody.innerHTML = data.arrivals.map(f => { const rc = getRowColor(f.sta, f.eta); return `<tr style="${rc}">
           <td class="font-mono font-semibold">${f.flight}</td>
           <td>${f.origin}</td>
           <td class="font-mono">${f.sta || '—'}</td>
           <td class="font-mono">${f.eta || '—'}</td>
           <td>${statusBadge(f.status)}</td>
           <td class="font-mono font-semibold">${f.gate}</td>
-        </tr>`).join('');
+        </tr>`; }).join('');
       }
       document.getElementById('arrCount').textContent = data.arrivals.length;
 
@@ -254,9 +269,16 @@
       if (heim.afternoon.length === 0) { aBody.innerHTML = ''; aEmpty.classList.remove('hidden'); }
       else { aEmpty.classList.add('hidden'); aBody.innerHTML = heim.afternoon.map(depRow).join(''); }
 
+      // Hide morning section between 12:00 and 00:00
+      const currentHour = new Date().getHours();
+      const showMorning = currentHour >= 0 && currentHour < 12;
+      const morningSection = mBody.closest('.mb-6');
+      if (morningSection) morningSection.style.display = showMorning ? '' : 'none';
+
+      const displayedMorning = showMorning ? heim.morning.length : 0;
       document.getElementById('morningCount').textContent = heim.morning.length;
       document.getElementById('afternoonCount').textContent = heim.afternoon.length;
-      document.getElementById('heimCount').textContent = heim.morning.length + heim.afternoon.length;
+      document.getElementById('heimCount').textContent = displayedMorning + heim.afternoon.length;
 
       // Updated time
       document.getElementById('lastUpdated').textContent = 'Síðast uppfært: ' + (data.updated || '');
@@ -269,6 +291,7 @@
       icon.classList.remove('refresh-spin');
       if (firstLoad) {
         firstLoad = false;
+        document.getElementById('colorLegend').classList.remove('hidden');
         switchTab('arrivals');
         document.getElementById('arrivalsPanel').classList.remove('hidden');
       }
