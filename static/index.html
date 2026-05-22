@@ -175,6 +175,10 @@
     const toMin = t => { const p = t.match(/(\d{1,2}):(\d{2})/); return p ? parseInt(p[1])*60+parseInt(p[2]) : NaN; };
     const s = toMin(scheduled), e = toMin(estimated);
     if (isNaN(s) || isNaN(e) || s === e) return '';
+    // Midnight crossover: scheduled late evening (>=20:00), estimated early morning (<06:00) = late
+    if (s >= 1200 && e < 360) return 'color: oklch(var(--er));';
+    // Reverse crossover: scheduled early morning, estimated late evening = early
+    if (s < 360 && e >= 1200) return 'color: oklch(var(--su));';
     return e > s ? 'color: oklch(var(--er));' : 'color: oklch(var(--su));';
   }
 
