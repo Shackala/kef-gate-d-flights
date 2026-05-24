@@ -78,6 +78,7 @@ def scrape_flights():
                     "sta": cell_map.get("sta", ""),
                     "eta": cell_map.get("eta", ""),
                     "status": cell_map.get("status", ""),
+                    "stand": cell_map.get("stand", ""),
                     "gate": gate,
                     "belt": cell_map.get("belt", ""),
                 })
@@ -88,6 +89,7 @@ def scrape_flights():
                     "std": cell_map.get("std", ""),
                     "etd": cell_map.get("etd", ""),
                     "status": cell_map.get("status", ""),
+                    "stand": cell_map.get("stand", ""),
                     "gate": gate,
                 }
                 if is_gate_d:
@@ -116,6 +118,7 @@ def scrape_flights():
             "std": d["std"],
             "etd": d["etd"],
             "status": d["status"],
+            "stand": d.get("stand", ""),
             "gate": d["gate"],
         }
         if 6 <= hour <= 12:
