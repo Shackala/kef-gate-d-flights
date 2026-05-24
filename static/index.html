@@ -78,7 +78,7 @@
         <table class="table table-sm table-zebra w-full">
           <thead>
             <tr class="text-xs uppercase tracking-wider">
-              <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Hlið</th>
+              <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Stand</th><th>Hlið</th>
             </tr>
           </thead>
           <tbody id="arrivalsBody"></tbody>
@@ -93,7 +93,7 @@
         <table class="table table-sm table-zebra w-full">
           <thead>
             <tr class="text-xs uppercase tracking-wider">
-              <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+              <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
             </tr>
           </thead>
           <tbody id="departuresBody"></tbody>
@@ -114,7 +114,7 @@
           <table class="table table-sm table-zebra w-full">
             <thead>
               <tr class="text-xs uppercase tracking-wider">
-                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
               </tr>
             </thead>
             <tbody id="morningBody"></tbody>
@@ -132,7 +132,7 @@
           <table class="table table-sm table-zebra w-full">
             <thead>
               <tr class="text-xs uppercase tracking-wider">
-                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Hlið</th>
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
               </tr>
             </thead>
             <tbody id="afternoonBody"></tbody>
@@ -202,6 +202,7 @@
       <td class="font-mono">${f.std || '—'}</td>
       <td class="font-mono">${f.etd || '—'}</td>
       <td>${statusBadge(f.status)}</td>
+      <td class="font-mono">${f.stand || '—'}</td>
       <td class="font-mono font-semibold">${f.gate}</td>
     </tr>`;
   }
@@ -243,6 +244,7 @@
           <td class="font-mono">${f.sta || '—'}</td>
           <td class="font-mono">${f.eta || '—'}</td>
           <td>${statusBadge(f.status)}</td>
+          <td class="font-mono">${f.stand || '—'}</td>
           <td class="font-mono font-semibold">${f.gate}</td>
         </tr>`; }).join('');
       }
