@@ -12,6 +12,10 @@
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
     .refresh-spin { animation: spin 1s linear infinite; }
     @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes fadeInBg { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes popIn { from { opacity: 0; transform: translate(-50%,-50%) scale(0.9); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+    .radar-backdrop { position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;animation:fadeInBg .25s ease; }
+    .radar-popup { position:fixed;z-index:50;top:50%;left:50%;transform:translate(-50%,-50%);width:min(90vw,900px);height:min(80vh,650px);border-radius:1rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,.5);animation:popIn .3s ease; }
   </style>
 </head>
 <body class="min-h-screen bg-base-100 p-4">
@@ -58,6 +62,9 @@
       </button>
       <button role="tab" class="tab gap-2" data-tab="heimavellir" onclick="switchTab('heimavellir')">
         <svg viewBox="1730 100 470 400" width="18" height="18" fill="currentColor"><path d="M2082.4,100l-352.5,400h345.7l124.2-400L2082.4,100z M1950,424.6c-5.6,0.7-11.2,1-16.8,0.9c-8.6-0.1-14-1.2-18.1-2.8c-3.5-1.4-6.6-5.2-5.5-8.1c1-2.2,2.6-4.1,4.8-5.3c10.1-6.5,28.3-9.9,48.4-11.2C1961,402,1950,424.6,1950,424.6z M2057,372.1c-14.6,17.2-29,18.4-57.4,15.8c-74.6-6.6-89,14-91.4,16.6c0.5-1.9,1.1-3.8,2-5.5c4.7-10.7,10.4-22.6,16.8-36.8c3.6-7.4,5.6-7.7,8.9-10.1c13.5-8.9,35.2-17.2,64.1-14.7c21.3,1.9,30.6,6.2,43.7,6.9c5.6,0.4,11.2,0.1,16.7-0.9c14-3,17.6-7.2,17.6-7.2S2068,358,2057,372.1z M2074.1,327c-4.6,2.7-10.6,5.3-22.2,5.7c-12.8,0.4-20.6-2.4-34.7-4.7c-19.3-3.1-38-4.3-58.2,2.1c-8.6,2.7-16.7,7-23.8,12.6c0,0,14.9-33.5,18.8-42.1c6.4-13.1,27.7-22.5,55.7-22.2c25.2,0.3,36.5,6.8,57.2,7.1c30.9-0.1,41.1-10.4,41.1-10.4c-1.8,3.8-11.2,23.5-15.6,31.9C2085.1,318.4,2079.9,323.6,2074.1,327z"/></svg> Heimavellir <span id="heimCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" onclick="toggleRadar()" id="radarTab" title="Flugsjá — ADS-B Exchange">
+        🌍✈️ Flugsjá
       </button>
     </div>
 
@@ -148,9 +155,34 @@
     </div>
   </div>
 
+  <!-- Floating Radar Popup -->
+  <div id="radarBackdrop" class="radar-backdrop hidden" onclick="toggleRadar()"></div>
+  <div id="radarPopup" class="radar-popup bg-base-100 border border-base-300 hidden">
+    <div class="flex items-center justify-between bg-base-200 px-4 py-2">
+      <span class="text-sm font-semibold">🌍 Flugsjá — ADS-B Exchange</span>
+      <button class="btn btn-sm btn-circle btn-ghost" onclick="toggleRadar()" title="Loka">✕</button>
+    </div>
+    <iframe id="radarFrame" class="w-full border-0" style="height:calc(100% - 44px)" allow="fullscreen" title="ADS-B Exchange Radar"></iframe>
+  </div>
+
 <script>
   let currentTab = 'arrivals';
   let firstLoad = true;
+  let radarOpen = false;
+
+  function toggleRadar() {
+    radarOpen = !radarOpen;
+    const backdrop = document.getElementById('radarBackdrop');
+    const popup = document.getElementById('radarPopup');
+    const frame = document.getElementById('radarFrame');
+    const tab = document.getElementById('radarTab');
+    backdrop.classList.toggle('hidden', !radarOpen);
+    popup.classList.toggle('hidden', !radarOpen);
+    tab.classList.toggle('tab-active', radarOpen);
+    if (radarOpen && !frame.src) {
+      frame.src = 'https://globe.adsbexchange.com/?lat=63.95&lon=-22.49&zoom=10';
+    }
+  }
   let darkMode = (function() { try { const s = localStorage.getItem('kef-theme'); return s !== null ? s === 'dark' : true; } catch { return true; } })();
   // Apply saved theme on load
   document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
