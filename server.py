@@ -141,94 +141,137 @@ def extract_location_from_cell(cell):
     return raw
 
 
+def scrape_cargo_page(url):
+    """Scrape a single cargo page and return list of parsed flight dicts."""
+    flights = []
+    try:
+        resp = requests.get(url, timeout=15, headers={
+            "User-Agent": "Mozilla/5.0 (compatible; KEFGateDBoard/1.0)"
+        })
+        resp.raise_for_status()
+    except requests.RequestException as e:
+        print(f"[WARN] Failed to fetch cargo page {url}: {e}")
+        return flights
+
+    soup = BeautifulSoup(resp.text, "html.parser")
+    tables = soup.find_all("table")
+
+    for table in tables:
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        headers = [th.get_text(strip=True).lower() for th in rows[0].find_all(["th", "td"])]
+        if not headers:
+            continue
+
+        header_idx = {h: i for i, h in enumerate(headers)}
+
+        # Location column — departures page uses "áfangastaður", arrivals uses "kemur frá"
+        loc_col = header_idx.get("áfangastaður",
+                  header_idx.get("kemur frá",
+                  header_idx.get("destination",
+                  header_idx.get("origin", -1))))
+
+        for row in rows[1:]:
+            cells = row.find_all(["th", "td"])
+            if len(cells) < len(headers):
+                continue
+
+            flight_col = header_idx.get("flug", header_idx.get("flight", -1))
+            flight = cells[flight_col].get_text(strip=True) if flight_col >= 0 else ""
+
+            location = extract_location_from_cell(cells[loc_col]) if loc_col >= 0 else ""
+
+            time_col = header_idx.get("tími", header_idx.get("std", header_idx.get("sta", -1)))
+            scheduled = cells[time_col].get_text(strip=True) if time_col >= 0 else ""
+            if scheduled:
+                times = re.findall(r'\d{1,2}:\d{2}', scheduled)
+                scheduled = times[-1] if times else scheduled
+
+            est_col = header_idx.get("áætlað", header_idx.get("etd", header_idx.get("eta", -1)))
+            estimated = cells[est_col].get_text(strip=True) if est_col >= 0 else ""
+            if estimated:
+                times = re.findall(r'\d{1,2}:\d{2}', estimated)
+                estimated = times[-1] if times else estimated
+
+            status_col = header_idx.get("staða", header_idx.get("status", -1))
+            status = cells[status_col].get_text(strip=True) if status_col >= 0 else ""
+
+            airline_col = header_idx.get("flugfélag", header_idx.get("airline", -1))
+            airline = cells[airline_col].get_text(strip=True) if airline_col >= 0 else ""
+
+            if is_schengen(location):
+                continue
+
+            flights.append({
+                "flight": flight,
+                "location": location,
+                "scheduled": scheduled,
+                "estimated": estimated,
+                "status": status,
+                "airline": airline,
+                "acType": "",
+                "acReg": "",
+            })
+
+    return flights
+
+
+# Arrival-related statuses (Icelandic)
+ARRIVAL_STATUSES = {"lent", "lentur", "lent á áætlun"}
+# Departure-related statuses (Icelandic)
+DEPARTURE_STATUSES = {"farin", "farinn", "farin á áætlun"}
+
+
 def scrape_cargo():
-    """Scrape cargo flights from kefairport.is and filter non-Schengen only."""
+    """Scrape cargo flights from kefairport.is and split into departures/arrivals.
+
+    The kefairport.is brottfarir and komur pages return identical data,
+    so we scrape both and deduplicate.  We split by status:
+      - Farin / Farinn  → departure
+      - Lent / Lentur   → arrival
+      - Á áætlun etc.   → use which page it was scraped from as tiebreaker
+    """
+    dep_page = scrape_cargo_page(CARGO_DEP_URL)
+    arr_page = scrape_cargo_page(CARGO_ARR_URL)
+
+    # Build a set of (flight, scheduled) keys seen on each page for Á áætlun tiebreaker
+    dep_keys = {(f["flight"], f["scheduled"]) for f in dep_page}
+    arr_keys = {(f["flight"], f["scheduled"]) for f in arr_page}
+
+    # Merge all flights, dedup by (flight, scheduled)
+    seen = set()
+    all_flights = []
+    for f in dep_page + arr_page:
+        key = (f["flight"], f["scheduled"])
+        if key not in seen:
+            seen.add(key)
+            all_flights.append(f)
+
     cargo_departures = []
     cargo_arrivals = []
 
-    for url, direction in [(CARGO_DEP_URL, "departures"), (CARGO_ARR_URL, "arrivals")]:
-        try:
-            resp = requests.get(url, timeout=15, headers={
-                "User-Agent": "Mozilla/5.0 (compatible; KEFGateDBoard/1.0)"
-            })
-            resp.raise_for_status()
-        except requests.RequestException as e:
-            print(f"[WARN] Failed to fetch cargo {direction}: {e}")
-            continue
+    for f in all_flights:
+        status_lower = f["status"].lower().strip()
+        key = (f["flight"], f["scheduled"])
 
-        soup = BeautifulSoup(resp.text, "html.parser")
-        tables = soup.find_all("table")
-
-        for table in tables:
-            rows = table.find_all("tr")
-            if not rows:
-                continue
-            headers = [th.get_text(strip=True).lower() for th in rows[0].find_all(["th", "td"])]
-            if not headers:
-                continue
-
-            # Map header names to indices
-            header_idx = {h: i for i, h in enumerate(headers)}
-
-            for row in rows[1:]:
-                cells = row.find_all(["th", "td"])
-                if len(cells) < len(headers):
-                    continue
-
-                # Get flight number from the "flug" column
-                flight_col = header_idx.get("flug", header_idx.get("flight", -1))
-                flight = cells[flight_col].get_text(strip=True) if flight_col >= 0 else ""
-
-                # Get location from "áfangastaður" or "uppruni" column — needs special parsing
-                if direction == "departures":
-                    loc_col = header_idx.get("áfangastaður", header_idx.get("destination", -1))
-                else:
-                    loc_col = header_idx.get("kemur frá", header_idx.get("uppruni", header_idx.get("origin", -1)))
-
-                location = extract_location_from_cell(cells[loc_col]) if loc_col >= 0 else ""
-
-                # Get scheduled time from "tími" column
-                time_col = header_idx.get("tími", header_idx.get("std", header_idx.get("sta", -1)))
-                scheduled = cells[time_col].get_text(strip=True) if time_col >= 0 else ""
-                # Clean up scheduled time — may have strikethrough old times; take last time value
-                if scheduled:
-                    times = re.findall(r'\d{1,2}:\d{2}', scheduled)
-                    scheduled = times[-1] if times else scheduled
-
-                # Get estimated time from "áætlað" column
-                est_col = header_idx.get("áætlað", header_idx.get("etd", header_idx.get("eta", -1)))
-                estimated = cells[est_col].get_text(strip=True) if est_col >= 0 else ""
-                if estimated:
-                    times = re.findall(r'\d{1,2}:\d{2}', estimated)
-                    estimated = times[-1] if times else estimated
-
-                # Get status from "staða" column
-                status_col = header_idx.get("staða", header_idx.get("status", -1))
-                status = cells[status_col].get_text(strip=True) if status_col >= 0 else ""
-
-                # Get airline from "flugfélag" column
-                airline_col = header_idx.get("flugfélag", header_idx.get("airline", -1))
-                airline = cells[airline_col].get_text(strip=True) if airline_col >= 0 else ""
-
-                # Skip Schengen destinations/origins
-                if is_schengen(location):
-                    continue
-
-                entry = {
-                    "flight": flight,
-                    "location": location,
-                    "scheduled": scheduled,
-                    "estimated": estimated,
-                    "status": status,
-                    "airline": airline,
-                    "acType": "",
-                    "acReg": "",
-                }
-
-                if direction == "departures":
-                    cargo_departures.append(entry)
-                else:
-                    cargo_arrivals.append(entry)
+        if status_lower in DEPARTURE_STATUSES:
+            cargo_departures.append(f)
+        elif status_lower in ARRIVAL_STATUSES:
+            cargo_arrivals.append(f)
+        else:
+            # Scheduled / unknown — assign based on page presence
+            # If only on dep page → departure; only on arr page → arrival;
+            # on both → show as departure (default for cargo scheduled flights)
+            in_dep = key in dep_keys
+            in_arr = key in arr_keys
+            if in_dep and not in_arr:
+                cargo_departures.append(f)
+            elif in_arr and not in_dep:
+                cargo_arrivals.append(f)
+            else:
+                # On both pages — default to departure for scheduled flights
+                cargo_departures.append(f)
 
     return {
         "departures": cargo_departures,
