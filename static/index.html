@@ -63,6 +63,9 @@
       <button role="tab" class="tab gap-2" data-tab="heimavellir" onclick="switchTab('heimavellir')">
         <svg viewBox="1730 100 470 400" width="18" height="18" fill="currentColor"><path d="M2082.4,100l-352.5,400h345.7l124.2-400L2082.4,100z M1950,424.6c-5.6,0.7-11.2,1-16.8,0.9c-8.6-0.1-14-1.2-18.1-2.8c-3.5-1.4-6.6-5.2-5.5-8.1c1-2.2,2.6-4.1,4.8-5.3c10.1-6.5,28.3-9.9,48.4-11.2C1961,402,1950,424.6,1950,424.6z M2057,372.1c-14.6,17.2-29,18.4-57.4,15.8c-74.6-6.6-89,14-91.4,16.6c0.5-1.9,1.1-3.8,2-5.5c4.7-10.7,10.4-22.6,16.8-36.8c3.6-7.4,5.6-7.7,8.9-10.1c13.5-8.9,35.2-17.2,64.1-14.7c21.3,1.9,30.6,6.2,43.7,6.9c5.6,0.4,11.2,0.1,16.7-0.9c14-3,17.6-7.2,17.6-7.2S2068,358,2057,372.1z M2074.1,327c-4.6,2.7-10.6,5.3-22.2,5.7c-12.8,0.4-20.6-2.4-34.7-4.7c-19.3-3.1-38-4.3-58.2,2.1c-8.6,2.7-16.7,7-23.8,12.6c0,0,14.9-33.5,18.8-42.1c6.4-13.1,27.7-22.5,55.7-22.2c25.2,0.3,36.5,6.8,57.2,7.1c30.9-0.1,41.1-10.4,41.1-10.4c-1.8,3.8-11.2,23.5-15.6,31.9C2085.1,318.4,2079.9,323.6,2074.1,327z"/></svg> Heimavellir <span id="heimCount" class="badge badge-sm">0</span>
       </button>
+      <button role="tab" class="tab gap-2" data-tab="cargo" onclick="switchTab('cargo')">
+        📦 Cargo <span id="cargoCount" class="badge badge-sm">0</span>
+      </button>
       <button role="tab" class="tab gap-2" onclick="toggleRadar()" id="radarTab" title="Flugsjá — ADS-B Exchange">
         🌍✈️ Flugsjá
       </button>
@@ -146,6 +149,46 @@
           </table>
         </div>
         <div id="afternoonEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engin FI flug á þessu tímabili.</div>
+      </div>
+    </div>
+
+    <!-- Cargo panel -->
+    <div id="cargoPanel" class="hidden fade-in">
+      <!-- Cargo Departures -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🛫 Brottfarir
+          <span id="cargoDepCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Tegund</th><th>Skráning</th>
+              </tr>
+            </thead>
+            <tbody id="cargoDepBody"></tbody>
+          </table>
+        </div>
+        <div id="cargoDepEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engar fraktbrottfarir utan Schengen.</div>
+      </div>
+      <!-- Cargo Arrivals -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🛬 Komur
+          <span id="cargoArrCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Tegund</th><th>Skráning</th>
+              </tr>
+            </thead>
+            <tbody id="cargoArrBody"></tbody>
+          </table>
+        </div>
+        <div id="cargoArrEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engar fraktkomur utan Schengen.</div>
       </div>
     </div>
 
@@ -248,6 +291,7 @@
     document.getElementById('arrivalsPanel').classList.toggle('hidden', tab !== 'arrivals');
     document.getElementById('departuresPanel').classList.toggle('hidden', tab !== 'departures');
     document.getElementById('heimavellirPanel').classList.toggle('hidden', tab !== 'heimavellir');
+    document.getElementById('cargoPanel').classList.toggle('hidden', tab !== 'cargo');
   }
 
   async function fetchFlights(showLoading) {
@@ -317,6 +361,36 @@
       document.getElementById('morningCount').textContent = heim.morning.length;
       document.getElementById('afternoonCount').textContent = heim.afternoon.length;
       document.getElementById('heimCount').textContent = displayedMorning + heim.afternoon.length;
+
+      // Cargo
+      const cargo = data.cargo || { departures: [], arrivals: [] };
+      const cdBody = document.getElementById('cargoDepBody');
+      const cdEmpty = document.getElementById('cargoDepEmpty');
+      const caBody = document.getElementById('cargoArrBody');
+      const caEmpty = document.getElementById('cargoArrEmpty');
+
+      function cargoRow(f, locLabel) {
+        const rc = getRowColor(f.scheduled, f.estimated);
+        return `<tr style="${rc}">
+          <td class="font-mono font-semibold">${f.flight}</td>
+          <td>${f.location}</td>
+          <td class="font-mono">${f.scheduled || '—'}</td>
+          <td class="font-mono">${f.estimated || '—'}</td>
+          <td>${statusBadge(f.status)}</td>
+          <td class="text-xs">${f.acType || '—'}</td>
+          <td class="font-mono text-xs">${f.acReg || '—'}</td>
+        </tr>`;
+      }
+
+      if (cargo.departures.length === 0) { cdBody.innerHTML = ''; cdEmpty.classList.remove('hidden'); }
+      else { cdEmpty.classList.add('hidden'); cdBody.innerHTML = cargo.departures.map(f => cargoRow(f)).join(''); }
+
+      if (cargo.arrivals.length === 0) { caBody.innerHTML = ''; caEmpty.classList.remove('hidden'); }
+      else { caEmpty.classList.add('hidden'); caBody.innerHTML = cargo.arrivals.map(f => cargoRow(f)).join(''); }
+
+      document.getElementById('cargoDepCount').textContent = cargo.departures.length;
+      document.getElementById('cargoArrCount').textContent = cargo.arrivals.length;
+      document.getElementById('cargoCount').textContent = cargo.departures.length + cargo.arrivals.length;
 
       // Updated time
       document.getElementById('lastUpdated').textContent = 'Síðast uppfært: ' + (data.updated || '');
