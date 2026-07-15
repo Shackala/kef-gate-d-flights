@@ -110,6 +110,37 @@ def is_schengen(location):
     return False
 
 
+def extract_location_from_cell(cell):
+    """Extract clean destination/origin from a cargo table cell.
+
+    The cell contains nested spans. The destination text lives inside a span
+    whose class contains 'destination'. We grab its direct text, ignoring
+    nested mobile-only children (flight number, logo, status).
+    """
+    # Find the span with class containing 'destination' (but not 'destinationDetail')
+    dest_spans = cell.find_all("span", class_=lambda c: c and any("destination__" in cls and "destinationDetail" not in cls for cls in (c if isinstance(c, list) else [c])))
+    if dest_spans:
+        # Get only direct text nodes of the first match
+        span = dest_spans[0]
+        text = "".join(child.strip() for child in span.children if isinstance(child, str))
+        if text:
+            return text.strip()
+
+    # Fallback: try the NavLink text span
+    text_span = cell.find("span", class_=lambda c: c and any("navLink__text" in cls for cls in (c if isinstance(c, list) else [c])))
+    if text_span:
+        for child in text_span.children:
+            if isinstance(child, str):
+                t = child.strip()
+                if t:
+                    return t
+
+    # Last fallback: get full cell text and clean up
+    raw = cell.get_text(strip=True)
+    raw = raw.lstrip("→").strip()
+    return raw
+
+
 def scrape_cargo():
     """Scrape cargo flights from kefairport.is and filter non-Schengen only."""
     cargo_departures = []
@@ -136,31 +167,62 @@ def scrape_cargo():
             if not headers:
                 continue
 
+            # Map header names to indices
+            header_idx = {h: i for i, h in enumerate(headers)}
+
             for row in rows[1:]:
-                cells = [td.get_text(strip=True) for td in row.find_all(["th", "td"])]
+                cells = row.find_all(["th", "td"])
                 if len(cells) < len(headers):
                     continue
-                cell_map = dict(zip(headers, cells))
 
-                # Determine location field
-                location = ""
+                # Get flight number from the "flug" column
+                flight_col = header_idx.get("flug", header_idx.get("flight", -1))
+                flight = cells[flight_col].get_text(strip=True) if flight_col >= 0 else ""
+
+                # Get location from "áfangastaður" or "uppruni" column — needs special parsing
                 if direction == "departures":
-                    location = cell_map.get("destination", cell_map.get("áfangastaður", ""))
+                    loc_col = header_idx.get("áfangastaður", header_idx.get("destination", -1))
                 else:
-                    location = cell_map.get("origin", cell_map.get("uppruni", ""))
+                    loc_col = header_idx.get("kemur frá", header_idx.get("uppruni", header_idx.get("origin", -1)))
+
+                location = extract_location_from_cell(cells[loc_col]) if loc_col >= 0 else ""
+
+                # Get scheduled time from "tími" column
+                time_col = header_idx.get("tími", header_idx.get("std", header_idx.get("sta", -1)))
+                scheduled = cells[time_col].get_text(strip=True) if time_col >= 0 else ""
+                # Clean up scheduled time — may have strikethrough old times; take last time value
+                if scheduled:
+                    times = re.findall(r'\d{1,2}:\d{2}', scheduled)
+                    scheduled = times[-1] if times else scheduled
+
+                # Get estimated time from "áætlað" column
+                est_col = header_idx.get("áætlað", header_idx.get("etd", header_idx.get("eta", -1)))
+                estimated = cells[est_col].get_text(strip=True) if est_col >= 0 else ""
+                if estimated:
+                    times = re.findall(r'\d{1,2}:\d{2}', estimated)
+                    estimated = times[-1] if times else estimated
+
+                # Get status from "staða" column
+                status_col = header_idx.get("staða", header_idx.get("status", -1))
+                status = cells[status_col].get_text(strip=True) if status_col >= 0 else ""
+
+                # Get airline from "flugfélag" column
+                airline_col = header_idx.get("flugfélag", header_idx.get("airline", -1))
+                airline = cells[airline_col].get_text(strip=True) if airline_col >= 0 else ""
 
                 # Skip Schengen destinations/origins
                 if is_schengen(location):
                     continue
 
                 entry = {
-                    "flight": cell_map.get("flight", cell_map.get("flug", "")),
+                    "flight": flight,
                     "location": location,
-                    "scheduled": cell_map.get("std", cell_map.get("sta", cell_map.get("áætlað", ""))),
-                    "estimated": cell_map.get("etd", cell_map.get("eta", cell_map.get("áætlun", ""))),
-                    "status": cell_map.get("status", cell_map.get("staða", "")),
-                    "acType": cell_map.get("a/c type", cell_map.get("flugvélategund", "")),
-                    "acReg": cell_map.get("a/c reg", cell_map.get("skráningarnúmer", "")),
+                    "scheduled": scheduled,
+                    "estimated": estimated,
+                    "status": status,
+                    "airline": airline,
+                    "acType": "",
+                    "acReg": "",
                 }
 
                 if direction == "departures":
