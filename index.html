@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="is" data-theme="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Keflavíkurflugvöllur — Hlið D</title>
+  <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" />
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }
+    .fade-in { animation: fadeIn 0.3s ease-in; }
+    @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
+    .refresh-spin { animation: spin 1s linear infinite; }
+    @keyframes spin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
+    @keyframes fadeInBg { from { opacity: 0; } to { opacity: 1; } }
+    @keyframes popIn { from { opacity: 0; transform: translate(-50%,-50%) scale(0.9); } to { opacity: 1; transform: translate(-50%,-50%) scale(1); } }
+    .radar-backdrop { position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:40;animation:fadeInBg .25s ease; }
+    .radar-popup { position:fixed;z-index:50;top:50%;left:50%;transform:translate(-50%,-50%);width:min(90vw,900px);height:min(80vh,650px);border-radius:1rem;overflow:hidden;box-shadow:0 25px 50px -12px rgba(0,0,0,.5);animation:popIn .3s ease; }
+  </style>
+</head>
+<body class="min-h-screen bg-base-100 p-4">
+
+  <div class="max-w-5xl mx-auto flex flex-col gap-4">
+    <!-- Header -->
+    <div class="flex items-center justify-between flex-wrap gap-2">
+      <div class="flex items-center gap-2">
+        <span class="text-2xl">✈️</span>
+        <div>
+          <h1 class="text-lg font-bold leading-tight">Keflavíkurflugvöllur — Hlið D</h1>
+          <p id="lastUpdated" class="text-xs text-base-content/50"></p>
+        </div>
+      </div>
+      <div class="flex items-center gap-2">
+        <button id="themeBtn" class="btn btn-sm btn-outline btn-ghost gap-1" onclick="toggleTheme()" title="Ljóst þema">
+          <svg id="themeIconSun" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg id="themeIconMoon" xmlns="http://www.w3.org/2000/svg" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none;">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <button id="refreshBtn" class="btn btn-sm btn-outline btn-primary gap-1" onclick="manualRefresh()">
+          <svg id="refreshIcon" xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="23 4 23 10 17 10"/><polyline points="1 20 1 14 7 14"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
+          </svg>
+          Endurhlaða
+        </button>
+      </div>
+    </div>
+
+    <!-- Error -->
+    <div id="errorBox" class="alert alert-error text-sm hidden"><span id="errorMsg"></span></div>
+
+    <!-- Tabs -->
+    <div role="tablist" class="tabs tabs-bordered">
+      <button role="tab" class="tab gap-2 tab-active font-semibold" data-tab="arrivals" onclick="switchTab('arrivals')">
+        🛬 Komur <span id="arrCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" data-tab="departures" onclick="switchTab('departures')">
+        🛫 Brottfarir <span id="depCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" data-tab="heimavellir" onclick="switchTab('heimavellir')">
+        <svg viewBox="1730 100 470 400" width="18" height="18" fill="currentColor"><path d="M2082.4,100l-352.5,400h345.7l124.2-400L2082.4,100z M1950,424.6c-5.6,0.7-11.2,1-16.8,0.9c-8.6-0.1-14-1.2-18.1-2.8c-3.5-1.4-6.6-5.2-5.5-8.1c1-2.2,2.6-4.1,4.8-5.3c10.1-6.5,28.3-9.9,48.4-11.2C1961,402,1950,424.6,1950,424.6z M2057,372.1c-14.6,17.2-29,18.4-57.4,15.8c-74.6-6.6-89,14-91.4,16.6c0.5-1.9,1.1-3.8,2-5.5c4.7-10.7,10.4-22.6,16.8-36.8c3.6-7.4,5.6-7.7,8.9-10.1c13.5-8.9,35.2-17.2,64.1-14.7c21.3,1.9,30.6,6.2,43.7,6.9c5.6,0.4,11.2,0.1,16.7-0.9c14-3,17.6-7.2,17.6-7.2S2068,358,2057,372.1z M2074.1,327c-4.6,2.7-10.6,5.3-22.2,5.7c-12.8,0.4-20.6-2.4-34.7-4.7c-19.3-3.1-38-4.3-58.2,2.1c-8.6,2.7-16.7,7-23.8,12.6c0,0,14.9-33.5,18.8-42.1c6.4-13.1,27.7-22.5,55.7-22.2c25.2,0.3,36.5,6.8,57.2,7.1c30.9-0.1,41.1-10.4,41.1-10.4c-1.8,3.8-11.2,23.5-15.6,31.9C2085.1,318.4,2079.9,323.6,2074.1,327z"/></svg> Heimavellir <span id="heimCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" data-tab="cargo" onclick="switchTab('cargo')">
+        📦 Cargo <span id="cargoCount" class="badge badge-sm">0</span>
+      </button>
+      <button role="tab" class="tab gap-2" onclick="toggleRadar()" id="radarTab" title="Flugsjá — ADS-B Exchange">
+        🌍✈️ Flugsjá
+      </button>
+    </div>
+
+    <!-- Color legend -->
+    <div id="colorLegend" class="hidden flex gap-4 text-xs text-base-content/70 px-1">
+      <span class="flex items-center gap-1"><span class="text-error font-bold">●</span> Eftir áætlun</span>
+      <span class="flex items-center gap-1"><span class="text-success font-bold">●</span> Undan áætlun</span>
+    </div>
+
+    <!-- Loading -->
+    <div id="loadingBox" class="flex items-center justify-center py-16">
+      <span class="loading loading-spinner loading-lg text-primary"></span>
+    </div>
+
+    <!-- Arrivals table -->
+    <div id="arrivalsPanel" class="hidden fade-in">
+      <div class="overflow-x-auto">
+        <table class="table table-sm table-zebra w-full">
+          <thead>
+            <tr class="text-xs uppercase tracking-wider">
+              <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Stand</th><th>Hlið</th>
+            </tr>
+          </thead>
+          <tbody id="arrivalsBody"></tbody>
+        </table>
+      </div>
+      <div id="arrivalsEmpty" class="text-center py-12 text-base-content/50 hidden">Engar komur á Hlið D.</div>
+    </div>
+
+    <!-- Departures table -->
+    <div id="departuresPanel" class="hidden fade-in">
+      <div class="overflow-x-auto">
+        <table class="table table-sm table-zebra w-full">
+          <thead>
+            <tr class="text-xs uppercase tracking-wider">
+              <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
+            </tr>
+          </thead>
+          <tbody id="departuresBody"></tbody>
+        </table>
+      </div>
+      <div id="departuresEmpty" class="text-center py-12 text-base-content/50 hidden">Engar brottfarir á Hlið D.</div>
+    </div>
+
+    <!-- Heimavellir panel -->
+    <div id="heimavellirPanel" class="hidden fade-in">
+      <!-- Morning -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🌅 Morgunflug (06:00 – 12:00)
+          <span id="morningCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
+              </tr>
+            </thead>
+            <tbody id="morningBody"></tbody>
+          </table>
+        </div>
+        <div id="morningEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engin FI flug á þessu tímabili.</div>
+      </div>
+      <!-- Afternoon -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🌇 Síðdegisflug (13:00 – 22:00)
+          <span id="afternoonCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Stand</th><th>Hlið</th>
+              </tr>
+            </thead>
+            <tbody id="afternoonBody"></tbody>
+          </table>
+        </div>
+        <div id="afternoonEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engin FI flug á þessu tímabili.</div>
+      </div>
+    </div>
+
+    <!-- Cargo panel -->
+    <div id="cargoPanel" class="hidden fade-in">
+      <!-- Cargo Departures -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🛫 Brottfarir
+          <span id="cargoDepCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Áfangastaður</th><th>Flugfélag</th><th>STD</th><th>ETD</th><th>Staða</th>
+              </tr>
+            </thead>
+            <tbody id="cargoDepBody"></tbody>
+          </table>
+        </div>
+        <div id="cargoDepEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engar fraktbrottfarir utan Schengen.</div>
+      </div>
+      <!-- Cargo Arrivals -->
+      <div class="mb-6">
+        <h3 class="text-md font-bold mb-2 flex items-center gap-2">
+          🛬 Komur
+          <span id="cargoArrCount" class="badge badge-sm badge-primary">0</span>
+        </h3>
+        <div class="overflow-x-auto">
+          <table class="table table-sm table-zebra w-full">
+            <thead>
+              <tr class="text-xs uppercase tracking-wider">
+                <th>Flug</th><th>Uppruni</th><th>Flugfélag</th><th>STA</th><th>ETA</th><th>Staða</th>
+              </tr>
+            </thead>
+            <tbody id="cargoArrBody"></tbody>
+          </table>
+        </div>
+        <div id="cargoArrEmpty" class="text-center py-6 text-base-content/50 text-sm hidden">Engar fraktkomur utan Schengen.</div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <div class="text-xs text-center text-base-content/40 mt-auto pt-4">
+      Gögn sótt af kefairport.is/fids • Síað eftir Hlið D
+    </div>
+  </div>
+
+  <!-- Floating Radar Popup -->
+  <div id="radarBackdrop" class="radar-backdrop hidden" onclick="toggleRadar()"></div>
+  <div id="radarPopup" class="radar-popup bg-base-100 border border-base-300 hidden">
+    <div class="flex items-center justify-between bg-base-200 px-4 py-2">
+      <span class="text-sm font-semibold">🌍 Flugsjá — ADS-B Exchange</span>
+      <button class="btn btn-sm btn-circle btn-ghost" onclick="toggleRadar()" title="Loka">✕</button>
+    </div>
+    <iframe id="radarFrame" class="w-full border-0" style="height:calc(100% - 44px)" allow="fullscreen" title="ADS-B Exchange Radar"></iframe>
+  </div>
+
+<script>
+  let currentTab = 'arrivals';
+  let firstLoad = true;
+  let radarOpen = false;
+
+  function toggleRadar() {
+    radarOpen = !radarOpen;
+    const backdrop = document.getElementById('radarBackdrop');
+    const popup = document.getElementById('radarPopup');
+    const frame = document.getElementById('radarFrame');
+    const tab = document.getElementById('radarTab');
+    backdrop.classList.toggle('hidden', !radarOpen);
+    popup.classList.toggle('hidden', !radarOpen);
+    tab.classList.toggle('tab-active', radarOpen);
+    if (radarOpen && !frame.src) {
+      frame.src = 'https://globe.adsbexchange.com/?lat=63.95&lon=-22.49&zoom=10';
+    }
+  }
+  let darkMode = (function() { try { const s = localStorage.getItem('kef-theme'); return s !== null ? s === 'dark' : true; } catch { return true; } })();
+  // Apply saved theme on load
+  document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+
+  function toggleTheme() {
+    darkMode = !darkMode;
+    document.documentElement.setAttribute('data-theme', darkMode ? 'dark' : 'light');
+    document.getElementById('themeIconSun').style.display = darkMode ? '' : 'none';
+    document.getElementById('themeIconMoon').style.display = darkMode ? 'none' : '';
+    document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
+    try { localStorage.setItem('kef-theme', darkMode ? 'dark' : 'light'); } catch {}
+  }
+  // Sync icons on load
+  document.addEventListener('DOMContentLoaded', function() {
+    document.getElementById('themeIconSun').style.display = darkMode ? '' : 'none';
+    document.getElementById('themeIconMoon').style.display = darkMode ? 'none' : '';
+    document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
+  });
+
+  function getRowColor(scheduled, estimated) {
+    if (!scheduled || !estimated) return '';
+    const toMin = t => { const p = t.match(/(\d{1,2}):(\d{2})/); return p ? parseInt(p[1])*60+parseInt(p[2]) : NaN; };
+    const s = toMin(scheduled), e = toMin(estimated);
+    if (isNaN(s) || isNaN(e) || s === e) return '';
+    // Midnight crossover: scheduled late evening (>=20:00), estimated early morning (<06:00) = late
+    if (s >= 1200 && e < 360) return 'color: oklch(var(--er));';
+    // Reverse crossover: scheduled early morning, estimated late evening = early
+    if (s < 360 && e >= 1200) return 'color: oklch(var(--su));';
+    return e > s ? 'color: oklch(var(--er));' : 'color: oklch(var(--su));';
+  }
+
+  function statusBadge(status) {
+    if (!status) return '<span class="text-base-content/40">—</span>';
+    const s = status.toLowerCase();
+    let cls = 'badge badge-sm ';
+    if (s.includes('landed')) cls += 'badge-success';
+    else if (s.includes('departed')) cls += 'badge-info';
+    else if (s.includes('estimated')) cls += 'badge-warning';
+    else if (s.includes('cancelled') || s.includes('canceled')) cls += 'badge-error';
+    else cls += 'badge-ghost';
+    return `<span class="${cls}">${status}</span>`;
+  }
+
+  function depRow(f) {
+    const rc = getRowColor(f.std, f.etd);
+    return `<tr style="${rc}">
+      <td class="font-mono font-semibold">${f.flight}</td>
+      <td>${f.destination}</td>
+      <td class="font-mono">${f.std || '—'}</td>
+      <td class="font-mono">${f.etd || '—'}</td>
+      <td>${statusBadge(f.status)}</td>
+      <td class="font-mono">${f.stand || '—'}</td>
+      <td class="font-mono font-semibold">${f.gate}</td>
+    </tr>`;
+  }
+
+  function switchTab(tab) {
+    currentTab = tab;
+    document.querySelectorAll('[data-tab]').forEach(btn => {
+      btn.classList.toggle('tab-active', btn.dataset.tab === tab);
+      btn.classList.toggle('font-semibold', btn.dataset.tab === tab);
+    });
+    document.getElementById('arrivalsPanel').classList.toggle('hidden', tab !== 'arrivals');
+    document.getElementById('departuresPanel').classList.toggle('hidden', tab !== 'departures');
+    document.getElementById('heimavellirPanel').classList.toggle('hidden', tab !== 'heimavellir');
+    document.getElementById('cargoPanel').classList.toggle('hidden', tab !== 'cargo');
+  }
+
+  async function fetchFlights(showLoading) {
+    if (showLoading) document.getElementById('loadingBox').classList.remove('hidden');
+    const icon = document.getElementById('refreshIcon');
+    icon.classList.add('refresh-spin');
+    document.getElementById('errorBox').classList.add('hidden');
+
+    try {
+      const res = await fetch('/api/flights');
+      if (!res.ok) throw new Error('Server error');
+      const data = await res.json();
+      if (data.error) throw new Error(data.error);
+
+      // Arrivals
+      const arrBody = document.getElementById('arrivalsBody');
+      const arrEmpty = document.getElementById('arrivalsEmpty');
+      if (data.arrivals.length === 0) {
+        arrBody.innerHTML = '';
+        arrEmpty.classList.remove('hidden');
+      } else {
+        arrEmpty.classList.add('hidden');
+        arrBody.innerHTML = data.arrivals.map(f => { const rc = getRowColor(f.sta, f.eta); return `<tr style="${rc}">
+          <td class="font-mono font-semibold">${f.flight}</td>
+          <td>${f.origin}</td>
+          <td class="font-mono">${f.sta || '—'}</td>
+          <td class="font-mono">${f.eta || '—'}</td>
+          <td>${statusBadge(f.status)}</td>
+          <td class="font-mono">${f.stand || '—'}</td>
+          <td class="font-mono font-semibold">${f.gate}</td>
+        </tr>`; }).join('');
+      }
+      document.getElementById('arrCount').textContent = data.arrivals.length;
+
+      // Departures
+      const depBody = document.getElementById('departuresBody');
+      const depEmpty = document.getElementById('departuresEmpty');
+      if (data.departures.length === 0) {
+        depBody.innerHTML = '';
+        depEmpty.classList.remove('hidden');
+      } else {
+        depEmpty.classList.add('hidden');
+        depBody.innerHTML = data.departures.map(depRow).join('');
+      }
+      document.getElementById('depCount').textContent = data.departures.length;
+
+      // Heimavellir
+      const heim = data.heimavellir || { morning: [], afternoon: [] };
+      const mBody = document.getElementById('morningBody');
+      const mEmpty = document.getElementById('morningEmpty');
+      const aBody = document.getElementById('afternoonBody');
+      const aEmpty = document.getElementById('afternoonEmpty');
+
+      if (heim.morning.length === 0) { mBody.innerHTML = ''; mEmpty.classList.remove('hidden'); }
+      else { mEmpty.classList.add('hidden'); mBody.innerHTML = heim.morning.map(depRow).join(''); }
+
+      if (heim.afternoon.length === 0) { aBody.innerHTML = ''; aEmpty.classList.remove('hidden'); }
+      else { aEmpty.classList.add('hidden'); aBody.innerHTML = heim.afternoon.map(depRow).join(''); }
+
+      // Hide morning section between 12:00 and 00:00
+      const currentHour = new Date().getHours();
+      const showMorning = currentHour >= 0 && currentHour < 12;
+      const morningSection = mBody.closest('.mb-6');
+      if (morningSection) morningSection.style.display = showMorning ? '' : 'none';
+
+      const displayedMorning = showMorning ? heim.morning.length : 0;
+      document.getElementById('morningCount').textContent = heim.morning.length;
+      document.getElementById('afternoonCount').textContent = heim.afternoon.length;
+      document.getElementById('heimCount').textContent = displayedMorning + heim.afternoon.length;
+
+      // Cargo
+      const cargo = data.cargo || { departures: [], arrivals: [] };
+      const cdBody = document.getElementById('cargoDepBody');
+      const cdEmpty = document.getElementById('cargoDepEmpty');
+      const caBody = document.getElementById('cargoArrBody');
+      const caEmpty = document.getElementById('cargoArrEmpty');
+
+      function cargoRow(f) {
+        const rc = getRowColor(f.scheduled, f.estimated);
+        return `<tr style="${rc}">
+          <td class="font-mono font-semibold">${f.flight}</td>
+          <td>${f.location}</td>
+          <td class="text-xs">${f.airline || '—'}</td>
+          <td class="font-mono">${f.scheduled || '—'}</td>
+          <td class="font-mono">${f.estimated || '—'}</td>
+          <td>${statusBadge(f.status)}</td>
+        </tr>`;
+      }
+
+      if (cargo.departures.length === 0) { cdBody.innerHTML = ''; cdEmpty.classList.remove('hidden'); }
+      else { cdEmpty.classList.add('hidden'); cdBody.innerHTML = cargo.departures.map(f => cargoRow(f)).join(''); }
+
+      if (cargo.arrivals.length === 0) { caBody.innerHTML = ''; caEmpty.classList.remove('hidden'); }
+      else { caEmpty.classList.add('hidden'); caBody.innerHTML = cargo.arrivals.map(f => cargoRow(f)).join(''); }
+
+      document.getElementById('cargoDepCount').textContent = cargo.departures.length;
+      document.getElementById('cargoArrCount').textContent = cargo.arrivals.length;
+      document.getElementById('cargoCount').textContent = cargo.departures.length + cargo.arrivals.length;
+
+      // Updated time
+      document.getElementById('lastUpdated').textContent = 'Síðast uppfært: ' + (data.updated || '');
+
+    } catch (e) {
+      document.getElementById('errorMsg').textContent = e.message;
+      document.getElementById('errorBox').classList.remove('hidden');
+    } finally {
+      document.getElementById('loadingBox').classList.add('hidden');
+      icon.classList.remove('refresh-spin');
+      if (firstLoad) {
+        firstLoad = false;
+        document.getElementById('colorLegend').classList.remove('hidden');
+        switchTab('arrivals');
+        document.getElementById('arrivalsPanel').classList.remove('hidden');
+      }
+    }
+  }
+
+  function manualRefresh() { fetchFlights(false); }
+
+  // Initial load + auto-refresh
+  fetchFlights(true);
+  setInterval(() => fetchFlights(false), 15000);
+</script>
+</body>
+</html>
