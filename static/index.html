@@ -164,7 +164,7 @@
           <table class="table table-sm table-zebra w-full">
             <thead>
               <tr class="text-xs uppercase tracking-wider">
-                <th>Flug</th><th>Áfangastaður</th><th>STD</th><th>ETD</th><th>Staða</th><th>Tegund</th><th>Skráning</th>
+                <th>Flug</th><th>Áfangastaður</th><th>Flugfélag</th><th>STD</th><th>ETD</th><th>Staða</th>
               </tr>
             </thead>
             <tbody id="cargoDepBody"></tbody>
@@ -182,7 +182,7 @@
           <table class="table table-sm table-zebra w-full">
             <thead>
               <tr class="text-xs uppercase tracking-wider">
-                <th>Flug</th><th>Uppruni</th><th>STA</th><th>ETA</th><th>Staða</th><th>Tegund</th><th>Skráning</th>
+                <th>Flug</th><th>Uppruni</th><th>Flugfélag</th><th>STA</th><th>ETA</th><th>Staða</th>
               </tr>
             </thead>
             <tbody id="cargoArrBody"></tbody>
@@ -369,16 +369,15 @@
       const caBody = document.getElementById('cargoArrBody');
       const caEmpty = document.getElementById('cargoArrEmpty');
 
-      function cargoRow(f, locLabel) {
+      function cargoRow(f) {
         const rc = getRowColor(f.scheduled, f.estimated);
         return `<tr style="${rc}">
           <td class="font-mono font-semibold">${f.flight}</td>
           <td>${f.location}</td>
+          <td class="text-xs">${f.airline || '—'}</td>
           <td class="font-mono">${f.scheduled || '—'}</td>
           <td class="font-mono">${f.estimated || '—'}</td>
           <td>${statusBadge(f.status)}</td>
-          <td class="text-xs">${f.acType || '—'}</td>
-          <td class="font-mono text-xs">${f.acReg || '—'}</td>
         </tr>`;
       }
 
