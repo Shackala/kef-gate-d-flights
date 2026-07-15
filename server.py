@@ -3,6 +3,7 @@ KEF Gate D Flights — Python Backend
 Scrapes kefairport.is/fids and serves Gate D arrivals, departures & Heimavellir as JSON.
 """
 
+import json
 import re
 import time
 import threading
@@ -141,137 +142,78 @@ def extract_location_from_cell(cell):
     return raw
 
 
-def scrape_cargo_page(url):
-    """Scrape a single cargo page and return list of parsed flight dicts."""
-    flights = []
+STATUS_MAP = {
+    "ON": "Lent",
+    "ATD": "Farin",
+    "NoStatus": "Á áætlun",
+    "DEP": "Farin",
+    "ARR": "Lent",
+    "CNL": "Aflýst",
+}
+
+
+def scrape_cargo():
+    """Scrape cargo flights from kefairport.is using embedded JSON data.
+
+    The cargo pages embed a __NEXT_DATA__ JSON blob with an 'arrival' boolean
+    on each flight, which is the authoritative way to split departures/arrivals.
+    Both brottfarir and komur pages return the same data, so we only need one.
+    """
+    cargo_departures = []
+    cargo_arrivals = []
+
     try:
-        resp = requests.get(url, timeout=15, headers={
+        resp = requests.get(CARGO_DEP_URL, timeout=15, headers={
             "User-Agent": "Mozilla/5.0 (compatible; KEFGateDBoard/1.0)"
         })
         resp.raise_for_status()
     except requests.RequestException as e:
-        print(f"[WARN] Failed to fetch cargo page {url}: {e}")
-        return flights
+        print(f"[WARN] Failed to fetch cargo page: {e}")
+        return {"departures": [], "arrivals": []}
 
     soup = BeautifulSoup(resp.text, "html.parser")
-    tables = soup.find_all("table")
 
-    for table in tables:
-        rows = table.find_all("tr")
-        if not rows:
+    # Extract JSON from __NEXT_DATA__ script tag
+    flights_json = []
+    for script in soup.find_all("script"):
+        txt = script.string or ""
+        if "flightArrayData" in txt:
+            try:
+                data = json.loads(txt)
+                flights_str = data["props"]["pageProps"]["flightArrayData"]
+                flights_json = json.loads(flights_str)
+            except (json.JSONDecodeError, KeyError) as e:
+                print(f"[WARN] Failed to parse cargo JSON: {e}")
+            break
+
+    for f in flights_json:
+        destination = f.get("destination", "")
+
+        # Filter Schengen
+        if is_schengen(destination):
             continue
-        headers = [th.get_text(strip=True).lower() for th in rows[0].find_all(["th", "td"])]
-        if not headers:
-            continue
 
-        header_idx = {h: i for i, h in enumerate(headers)}
+        status_code = f.get("status", "")
+        status_text = STATUS_MAP.get(status_code, status_code)
 
-        # Location column — departures page uses "áfangastaður", arrivals uses "kemur frá"
-        loc_col = header_idx.get("áfangastaður",
-                  header_idx.get("kemur frá",
-                  header_idx.get("destination",
-                  header_idx.get("origin", -1))))
+        scheduled = f.get("time", "")
+        updated = f.get("updatedTime", "")
 
-        for row in rows[1:]:
-            cells = row.find_all(["th", "td"])
-            if len(cells) < len(headers):
-                continue
+        flight_data = {
+            "flight": f.get("flightNumber", ""),
+            "location": destination,
+            "scheduled": scheduled,
+            "estimated": updated if updated else "",
+            "status": status_text,
+            "airline": f.get("airline", ""),
+            "acType": "",
+            "acReg": "",
+        }
 
-            flight_col = header_idx.get("flug", header_idx.get("flight", -1))
-            flight = cells[flight_col].get_text(strip=True) if flight_col >= 0 else ""
-
-            location = extract_location_from_cell(cells[loc_col]) if loc_col >= 0 else ""
-
-            time_col = header_idx.get("tími", header_idx.get("std", header_idx.get("sta", -1)))
-            scheduled = cells[time_col].get_text(strip=True) if time_col >= 0 else ""
-            if scheduled:
-                times = re.findall(r'\d{1,2}:\d{2}', scheduled)
-                scheduled = times[-1] if times else scheduled
-
-            est_col = header_idx.get("áætlað", header_idx.get("etd", header_idx.get("eta", -1)))
-            estimated = cells[est_col].get_text(strip=True) if est_col >= 0 else ""
-            if estimated:
-                times = re.findall(r'\d{1,2}:\d{2}', estimated)
-                estimated = times[-1] if times else estimated
-
-            status_col = header_idx.get("staða", header_idx.get("status", -1))
-            status = cells[status_col].get_text(strip=True) if status_col >= 0 else ""
-
-            airline_col = header_idx.get("flugfélag", header_idx.get("airline", -1))
-            airline = cells[airline_col].get_text(strip=True) if airline_col >= 0 else ""
-
-            if is_schengen(location):
-                continue
-
-            flights.append({
-                "flight": flight,
-                "location": location,
-                "scheduled": scheduled,
-                "estimated": estimated,
-                "status": status,
-                "airline": airline,
-                "acType": "",
-                "acReg": "",
-            })
-
-    return flights
-
-
-# Arrival-related statuses (Icelandic)
-ARRIVAL_STATUSES = {"lent", "lentur", "lent á áætlun"}
-# Departure-related statuses (Icelandic)
-DEPARTURE_STATUSES = {"farin", "farinn", "farin á áætlun"}
-
-
-def scrape_cargo():
-    """Scrape cargo flights from kefairport.is and split into departures/arrivals.
-
-    The kefairport.is brottfarir and komur pages return identical data,
-    so we scrape both and deduplicate.  We split by status:
-      - Farin / Farinn  → departure
-      - Lent / Lentur   → arrival
-      - Á áætlun etc.   → use which page it was scraped from as tiebreaker
-    """
-    dep_page = scrape_cargo_page(CARGO_DEP_URL)
-    arr_page = scrape_cargo_page(CARGO_ARR_URL)
-
-    # Build a set of (flight, scheduled) keys seen on each page for Á áætlun tiebreaker
-    dep_keys = {(f["flight"], f["scheduled"]) for f in dep_page}
-    arr_keys = {(f["flight"], f["scheduled"]) for f in arr_page}
-
-    # Merge all flights, dedup by (flight, scheduled)
-    seen = set()
-    all_flights = []
-    for f in dep_page + arr_page:
-        key = (f["flight"], f["scheduled"])
-        if key not in seen:
-            seen.add(key)
-            all_flights.append(f)
-
-    cargo_departures = []
-    cargo_arrivals = []
-
-    for f in all_flights:
-        status_lower = f["status"].lower().strip()
-        key = (f["flight"], f["scheduled"])
-
-        if status_lower in DEPARTURE_STATUSES:
-            cargo_departures.append(f)
-        elif status_lower in ARRIVAL_STATUSES:
-            cargo_arrivals.append(f)
+        if f.get("arrival", False):
+            cargo_arrivals.append(flight_data)
         else:
-            # Scheduled / unknown — assign based on page presence
-            # If only on dep page → departure; only on arr page → arrival;
-            # on both → show as departure (default for cargo scheduled flights)
-            in_dep = key in dep_keys
-            in_arr = key in arr_keys
-            if in_dep and not in_arr:
-                cargo_departures.append(f)
-            elif in_arr and not in_dep:
-                cargo_arrivals.append(f)
-            else:
-                # On both pages — default to departure for scheduled flights
-                cargo_departures.append(f)
+            cargo_departures.append(flight_data)
 
     return {
         "departures": cargo_departures,
