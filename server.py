@@ -379,6 +379,85 @@ def flights_api():
     return jsonify(data)
 
 
+# ---------------------------------------------------------------------------
+# Flugsjá — live radar feed relayed from flugumferd.is
+# ---------------------------------------------------------------------------
+
+RADAR_WS_URL = "wss://flugumferd.is/api/live"
+radar_state = {"aircraft": [], "now": 0, "updated": 0, "status": "starting"}
+radar_lock = threading.Lock()
+
+
+def _radar_worker():
+    """Maintain a persistent websocket to flugumferd.is and cache snapshots."""
+    import websocket  # websocket-client
+
+    backoff = 2
+    while True:
+        ws = None
+        try:
+            with radar_lock:
+                radar_state["status"] = "connecting"
+            ws = websocket.create_connection(
+                RADAR_WS_URL,
+                origin="https://flugumferd.is",
+                header={
+                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0 Safari/537.36"
+                },
+                timeout=30,
+            )
+            backoff = 2
+            with radar_lock:
+                radar_state["status"] = "connected"
+            while True:
+                msg = ws.recv()
+                if not msg:
+                    break
+                try:
+                    payload = json.loads(msg)
+                except Exception:
+                    continue
+                if payload.get("type") == "full" and isinstance(
+                    payload.get("aircraft"), list
+                ):
+                    with radar_lock:
+                        radar_state["aircraft"] = payload["aircraft"]
+                        radar_state["now"] = payload.get("now", time.time())
+                        radar_state["updated"] = time.time()
+                        radar_state["status"] = "connected"
+        except Exception:
+            with radar_lock:
+                radar_state["status"] = "offline"
+        finally:
+            try:
+                if ws:
+                    ws.close()
+            except Exception:
+                pass
+        time.sleep(backoff)
+        backoff = min(backoff * 2, 30)
+
+
+_radar_thread = threading.Thread(target=_radar_worker, daemon=True)
+_radar_thread.start()
+
+
+@app.route("/api/radar")
+def radar_api():
+    with radar_lock:
+        age = time.time() - radar_state["updated"] if radar_state["updated"] else None
+        return jsonify(
+            {
+                "aircraft": radar_state["aircraft"],
+                "now": radar_state["now"],
+                "age": age,
+                "status": radar_state["status"],
+                "source": "flugumferd.is",
+            }
+        )
+
+
 if __name__ == "__main__":
     print("🛫 KEF Gate D Flights server starting on http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)
