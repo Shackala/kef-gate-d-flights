@@ -7,7 +7,17 @@
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
   <style>
+    #radarMap { height: calc(100% - 44px); width: 100%; background: #0b1220; }
+    #radarMap .leaflet-control-attribution { font-size: 9px; }
+    .plane-icon { transition: transform .5s linear; }
+    .plane-icon svg { display:block; filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
+    .plane-label { font-size: 9px; font-weight: 700; color: #fff; text-shadow: 0 0 3px #000, 0 0 3px #000; white-space: nowrap; margin-top: -2px; text-align: center; }
+    .radar-status { position:absolute; left:8px; bottom:8px; z-index:500; background:rgba(0,0,0,.65); color:#fff; font-size:11px; padding:3px 8px; border-radius:6px; }
+    .radar-legend { position:absolute; right:8px; bottom:24px; z-index:500; background:rgba(0,0,0,.65); color:#fff; font-size:10px; padding:5px 8px; border-radius:6px; line-height:1.5; }
+    .radar-legend i { display:inline-block; width:9px; height:9px; border-radius:50%; margin-right:5px; }
     body { font-family: 'Inter', 'Segoe UI', system-ui, sans-serif; }
     .fade-in { animation: fadeIn 0.3s ease-in; }
     @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
@@ -203,10 +213,22 @@
   <div id="radarBackdrop" class="radar-backdrop hidden" onclick="toggleRadar()"></div>
   <div id="radarPopup" class="radar-popup bg-base-100 border border-base-300 hidden">
     <div class="flex items-center justify-between bg-base-200 px-4 py-2">
-      <span class="text-sm font-semibold">🌍 Flugsjá — ADS-B Exchange</span>
-      <button class="btn btn-sm btn-circle btn-ghost" onclick="toggleRadar()" title="Loka">✕</button>
+      <span class="text-sm font-semibold">🌍 Flugsjá — Suðurnes</span>
+      <div class="flex items-center gap-1">
+        <button class="btn btn-xs btn-ghost" onclick="radarRecenter()" title="Miða á Keflavíkurflugvöll">🎯 KEF</button>
+        <button class="btn btn-sm btn-circle btn-ghost" onclick="toggleRadar()" title="Loka">✕</button>
+      </div>
     </div>
-    <iframe id="radarFrame" class="w-full border-0" style="height:calc(100% - 44px)" allow="fullscreen" title="ADS-B Exchange Radar"></iframe>
+    <div id="radarMap"></div>
+    <div class="radar-status" id="radarStatus">Tengist…</div>
+    <div class="radar-legend">
+      <div><i style="background:#38bdf8"></i>&lt; 600 m</div>
+      <div><i style="background:#34d399"></i>600–2.4k</div>
+      <div><i style="background:#fbbf24"></i>2.4k–5.5k</div>
+      <div><i style="background:#fb923c"></i>5.5k–8.5k</div>
+      <div><i style="background:#f87171"></i>8.5k–11.6k</div>
+      <div><i style="background:#e879f9"></i>&gt; 11.6k</div>
+    </div>
   </div>
 
 <script>
@@ -214,17 +236,139 @@
   let firstLoad = true;
   let radarOpen = false;
 
+  // ---- Flugsjá live radar (gögn frá flugumferd.is) ----
+  const KEF = [63.985, -22.605];        // Keflavíkurflugvöllur
+  const SUDURNES_CENTER = [63.95, -22.50];
+  let radarMap = null, radarTimer = null;
+  const radarMarkers = {};   // hex -> {marker, lastSeen}
+
+  function altColor(m) {
+    if (m == null) return '#94a3b8';
+    if (m < 600) return '#38bdf8';
+    if (m < 2400) return '#34d399';
+    if (m < 5500) return '#fbbf24';
+    if (m < 8500) return '#fb923c';
+    if (m < 11600) return '#f87171';
+    return '#e879f9';
+  }
+
+  function planeIcon(track, color, label) {
+    const rot = (track == null ? 0 : track);
+    return L.divIcon({
+      className: '',
+      html: '<div class="plane-icon" style="transform:rotate(' + rot + 'deg)">'
+          + '<svg width="22" height="22" viewBox="0 0 24 24" fill="' + color + '">'
+          + '<path d="M12 2 L13.6 9.2 L22 13 L22 15 L13.6 13.2 L13.2 19.4 L16 21.2 L16 22.4 L12 21.4 L8 22.4 L8 21.2 L10.8 19.4 L10.4 13.2 L2 15 L2 13 L10.4 9.2 Z"/>'
+          + '</svg></div>'
+          + '<div class="plane-label">' + (label || '') + '</div>',
+      iconSize: [22, 22],
+      iconAnchor: [11, 11],
+    });
+  }
+
+  function radarRecenter() {
+    if (radarMap) radarMap.setView(KEF, 10);
+  }
+
+  function initRadarMap() {
+    radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
+                .setView(SUDURNES_CENTER, 10);
+    const style = darkMode ? 'dark_all' : 'voyager';
+    L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', {
+      attribution: 'Gögn: flugumferd.is · © OpenStreetMap, CARTO',
+      maxZoom: 18,
+    }).addTo(radarMap);
+    if (!darkMode) document.getElementById('radarMap').style.background = '#e8e8e8';
+    radarMap.on('zoomend', refreshRadar);
+
+    // Merkja Keflavíkurflugvöll
+    L.circleMarker(KEF, { radius: 6, color: '#facc15', weight: 2, fillColor: '#facc15', fillOpacity: .9 })
+      .addTo(radarMap).bindTooltip('BIKF — Keflavíkurflugvöllur', { permanent: false });
+    L.circle(KEF, { radius: 30000, color: '#facc15', weight: 1, opacity: .25, fill: false, dashArray: '5,6' }).addTo(radarMap);
+  }
+
+  async function refreshRadar() {
+    try {
+      const res = await fetch('/api/radar');
+      if (!res.ok) throw new Error('radar http ' + res.status);
+      const data = await res.json();
+      const list = Array.isArray(data.aircraft) ? data.aircraft : [];
+      const seen = new Set();
+      let inView = 0;
+      const bounds = radarMap.getBounds();
+
+      list.forEach(ac => {
+        if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return;
+        const id = ac.hex || ac.r || ac.flight;
+        if (!id) return;
+        seen.add(id);
+        const altM = (typeof ac.alt_baro === 'number') ? Math.round(ac.alt_baro * 0.3048) : null;
+        const color = altColor(altM);
+        const showLabels = radarMap.getZoom() >= 11;
+        const label = showLabels ? (ac.flight || ac.r || '').trim() : '';
+        const pos = [ac.lat, ac.lon];
+        if (bounds.contains(pos)) inView++;
+
+        const popupHtml =
+          '<div style="font-size:12px;line-height:1.5">'
+          + '<b style="font-size:13px">' + (label || '—') + '</b><br/>'
+          + (ac.r ? 'Einkennisstafir: <b>' + ac.r + '</b><br/>' : '')
+          + (ac.t ? 'Gerð: <b>' + ac.t + '</b><br/>' : '')
+          + (altM != null ? 'Flughæð: <b>' + altM.toLocaleString('is-IS') + ' m</b><br/>' : '')
+          + (typeof ac.gs === 'number' ? 'Hraði: <b>' + Math.round(ac.gs) + ' hn</b><br/>' : '')
+          + (typeof ac.track === 'number' ? 'Stefna: <b>' + Math.round(ac.track) + '°</b><br/>' : '')
+          + (ac.squawk ? 'Svarkóði: <b>' + ac.squawk + '</b>' : '')
+          + '</div>';
+
+        let entry = radarMarkers[id];
+        if (!entry) {
+          const marker = L.marker(pos, { icon: planeIcon(ac.track, color, label) }).addTo(radarMap);
+          marker.bindPopup(popupHtml);
+          radarMarkers[id] = { marker };
+        } else {
+          entry.marker.setLatLng(pos);
+          entry.marker.setIcon(planeIcon(ac.track, color, label));
+          entry.marker.getPopup().setContent(popupHtml);
+        }
+      });
+
+      // Fjarlægja vélar sem eru horfnar
+      Object.keys(radarMarkers).forEach(id => {
+        if (!seen.has(id)) {
+          radarMap.removeLayer(radarMarkers[id].marker);
+          delete radarMarkers[id];
+        }
+      });
+
+      const st = document.getElementById('radarStatus');
+      if (data.status === 'connected') {
+        st.textContent = '🟢 ' + inView + ' vélar í sýn · ' + list.length + ' yfir Íslandi';
+      } else {
+        st.textContent = '🔴 Tenging niðri — reyni aftur…';
+      }
+    } catch (e) {
+      console.warn('Radar fetch failed:', e);
+    }
+  }
+
   function toggleRadar() {
     radarOpen = !radarOpen;
     const backdrop = document.getElementById('radarBackdrop');
     const popup = document.getElementById('radarPopup');
-    const frame = document.getElementById('radarFrame');
     const tab = document.getElementById('radarTab');
     backdrop.classList.toggle('hidden', !radarOpen);
     popup.classList.toggle('hidden', !radarOpen);
     tab.classList.toggle('tab-active', radarOpen);
-    if (radarOpen && !frame.src) {
-      frame.src = 'https://globe.adsbexchange.com/?lat=63.95&lon=-22.49&zoom=10';
+
+    if (radarOpen) {
+      if (!radarMap) initRadarMap();
+      setTimeout(() => radarMap.invalidateSize(), 60);
+      refreshRadar();
+      if (radarTimer) clearInterval(radarTimer);
+      radarTimer = setInterval(refreshRadar, 3000);
+    } else if (radarTimer) {
+      clearInterval(radarTimer);
+      radarTimer = null;
     }
   }
   let darkMode = (function() { try { const s = localStorage.getItem('kef-theme'); return s !== null ? s === 'dark' : true; } catch { return true; } })();
