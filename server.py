@@ -458,6 +458,35 @@ def radar_api():
         )
 
 
+_TILE_STYLES = {"dark_all", "light_all", "dark_nolabels", "light_nolabels"}
+_tile_cache = {}
+
+
+@app.route("/api/tile/<style>/<int:z>/<int:x>/<int:y>.png")
+def tile_proxy(style, z, x, y):
+    """Varaleið fyrir kortaflísar ef vafrinn nær ekki beint í CARTO."""
+    if style not in _TILE_STYLES or not (0 <= z <= 18):
+        return ("bad tile request", 400)
+    key = (style, z, x, y)
+    if key not in _tile_cache:
+        if len(_tile_cache) > 4000:
+            _tile_cache.clear()
+        url = f"https://a.basemaps.cartocdn.com/{style}/{z}/{x}/{y}.png"
+        try:
+            r = requests.get(url, timeout=10, headers={"User-Agent": "kef-fids/1.0"})
+            if r.status_code != 200:
+                return ("tile unavailable", 502)
+            _tile_cache[key] = r.content
+        except Exception as e:
+            print(f"tile proxy error: {e}")
+            return ("tile error", 502)
+    return app.response_class(
+        _tile_cache[key],
+        mimetype="image/png",
+        headers={"Cache-Control": "public, max-age=604800"},
+    )
+
+
 if __name__ == "__main__":
     print("🛫 KEF Gate D Flights server starting on http://localhost:5000")
     app.run(host="0.0.0.0", port=5000, debug=False)
