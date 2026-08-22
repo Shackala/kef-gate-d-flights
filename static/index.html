@@ -7,10 +7,12 @@
   <link rel="icon" type="image/png" href="/static/favicon.png" />
   <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.14/dist/full.min.css" rel="stylesheet" />
   <script src="https://cdn.tailwindcss.com"></script>
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
-  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <link rel="stylesheet" href="/static/vendor/leaflet.css" />
+  <script src="/static/vendor/leaflet.js"></script>
   <style>
     #radarMap { height: calc(100% - 44px); width: 100%; background: #0b1220; }
+    /* Dökka kortið er mjög dauft — lyftum birtu svo strandlína og vegir sjáist vel */
+    html[data-theme="dark"] #radarMap .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
     #radarMap .leaflet-control-attribution { font-size: 9px; }
     .plane-icon { transition: transform .5s linear; }
     .plane-icon svg { display:block; filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
@@ -273,11 +275,20 @@
   function initRadarMap() {
     radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
                 .setView(SUDURNES_CENTER, 10);
-    const style = darkMode ? 'dark_all' : 'voyager';
-    L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', {
+    const style = darkMode ? 'dark_all' : 'light_all';
+    let tileErrors = 0, usingProxy = false;
+    const layer = L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', {
       attribution: 'Gögn: flugumferd.is · © OpenStreetMap, CARTO',
-      maxZoom: 18,
+      subdomains: 'abcd', maxZoom: 18, crossOrigin: true,
     }).addTo(radarMap);
+    // Ef kortaflísar hlaðast ekki beint (net/CDN lokað), skiptum sjálfkrafa yfir á vefþjóninn okkar
+    layer.on('tileerror', () => {
+      if (usingProxy) return;
+      if (++tileErrors < 3) return;
+      usingProxy = true;
+      console.warn('Kortaflísar blokkaðar — skipti yfir á vefþjón');
+      layer.setUrl('/api/tile/' + style + '/{z}/{x}/{y}.png');
+    });
     if (!darkMode) document.getElementById('radarMap').style.background = '#e8e8e8';
     radarMap.on('zoomend', refreshRadar);
 
