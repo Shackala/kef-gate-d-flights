@@ -11,25 +11,6 @@
   <script src="/static/vendor/leaflet.js"></script>
   <style>
     #radarMap { height: calc(100% - 44px); width: 100%; background: #0b1220; }
-    /* Smellanlegt flugnúmer + kort sem opnast undir línunni */
-    .flight-btn { font: inherit; color: inherit; background: none; border: 0; padding: 0;
-                  cursor: pointer; border-bottom: 1px dotted currentColor; }
-    .flight-btn:hover { opacity: .75; }
-    tr.track-open { outline: 1px solid rgba(96,165,250,.45); }
-    tr.track-row > td { border-top: 0; }
-    .track-host { background: rgba(0,0,0,.18); border-left: 3px solid #60a5fa; }
-    .track-bar { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap;
-                 padding: .4rem .6rem; font-size: .78rem; }
-    .track-title { font-weight: 600; font-family: ui-monospace, monospace; }
-    .track-info { display: flex; gap: .35rem; flex-wrap: wrap; align-items: center; flex: 1; }
-    .track-chip { background: rgba(96,165,250,.16); border-radius: 999px; padding: .05rem .5rem;
-                  font-family: ui-monospace, monospace; }
-    .track-src { opacity: .45; font-size: .7rem; }
-    .track-stale { opacity: .6; border-style: dashed !important; }
-    .track-anr { font-size: .7rem; opacity: .6; text-decoration: underline; margin-left: .25rem; }
-    .track-anr:hover { opacity: 1; }
-    .track-map { height: 260px; width: 100%; background: #0b1220; }
-    html[data-theme="dark"] .track-map .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
     /* Dökka kortið er mjög dauft — lyftum birtu svo strandlína og vegir sjáist vel */
     html[data-theme="dark"] #radarMap .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
     #radarMap .leaflet-control-attribution { font-size: 9px; }
@@ -287,192 +268,27 @@
     });
   }
 
-  // ------------------------------------------------------------------
-  // Eftirfylgni: smellt á flugnúmer í Komum -> kort opnast undir línunni
-  // ------------------------------------------------------------------
-  const track = { flight: null, host: null, map: null, marker: null, line: null,
-                  ring: null, timer: null, info: null, followed: false };
-
-  function buildTrackHost() {
-    const host = document.createElement('div');
-    host.className = 'track-host';
-    host.innerHTML =
-      '<div class="track-bar">'
-      + '<span class="track-title"></span>'
-      + '<span class="track-info"></span>'
-      + '<button class="btn btn-xs btn-ghost track-close" title="Loka">✕</button>'
-      + '</div>'
-      + '<div class="track-map"></div>';
-    host.querySelector('.track-close').onclick = closeTrack;
-    track.host = host;
-    track.info = host.querySelector('.track-info');
-    return host;
-  }
-
-  function toggleTrack(flight) {
-    if (track.flight === flight) { closeTrack(); return; }
-    track.flight = flight;
-    track.followed = false;
-    if (!track.host) buildTrackHost();
-    track.host.querySelector('.track-title').textContent = '✈️ ' + flight;
-    if (track.info) track.info.innerHTML = '<span class="opacity-60">Leita að flugvél…</span>';
-    applyTrackRow();
-    fetchTrack();
-    clearInterval(track.timer);
-    track.timer = setInterval(fetchTrack, 10000);
-  }
-
-  function closeTrack() {
-    clearInterval(track.timer);
-    track.timer = null;
-    track.flight = null;
-    document.querySelectorAll('tr.track-row').forEach(r => r.remove());
-    document.querySelectorAll('tr.track-open').forEach(r => r.classList.remove('track-open'));
-  }
-
-  // Setur kortalínuna aftur inn eftir hverja endurteikningu töflunnar (helst lifandi)
-  function applyTrackRow() {
-    document.querySelectorAll('tr.track-row').forEach(r => r.remove());
-    document.querySelectorAll('tr.track-open').forEach(r => r.classList.remove('track-open'));
-    if (!track.flight) return;
-    const body = document.getElementById('arrivalsBody');
-    const row = body ? body.querySelector('tr[data-flight="' + track.flight + '"]') : null;
-    if (!row) return;   // flugið dottið af töflunni — kortið birtist aftur ef það kemur til baka
-    row.classList.add('track-open');
-    const tr = document.createElement('tr');
-    tr.className = 'track-row';
-    const td = document.createElement('td');
-    td.colSpan = 7;
-    td.style.padding = '0';
-    td.appendChild(track.host);
-    tr.appendChild(td);
-    row.after(tr);
-
-    const mapDiv = track.host.querySelector('.track-map');
-    if (!track.map) {
-      track.map = L.map(mapDiv, { zoomControl: true, attributionControl: true }).setView(KEF, 6);
-      addBaseLayer(track.map, '© OpenStreetMap, CARTO');
-      L.circleMarker(KEF, { radius: 5, color: '#facc15', weight: 2, fillColor: '#facc15', fillOpacity: .9 })
-        .addTo(track.map).bindTooltip('BIKF — Keflavík');
-    }
-    setTimeout(() => track.map && track.map.invalidateSize(), 60);
-  }
-
-  function fmtKm(km) { return km >= 100 ? Math.round(km) : km.toFixed(1); }
-
-  function haversine(a, b) {
-    const R = 6371, rad = Math.PI / 180;
-    const dLat = (b[0] - a[0]) * rad, dLon = (b[1] - a[1]) * rad;
-    const s = Math.sin(dLat / 2) ** 2
-            + Math.cos(a[0] * rad) * Math.cos(b[0] * rad) * Math.sin(dLon / 2) ** 2;
-    return 2 * R * Math.asin(Math.sqrt(s));
-  }
-
-  async function fetchTrack() {
-    const flight = track.flight;
-    if (!flight) return;
-    try {
-      const res = await fetch('/api/track/' + encodeURIComponent(flight));
-      if (!res.ok) throw new Error('track http ' + res.status);
-      const d = await res.json();
-      if (track.flight !== flight) return;   // notandi skipti um flug á meðan
-      renderTrack(d);
-    } catch (e) {
-      console.warn('Eftirfylgni mistókst:', e);   // þögult — reynum aftur eftir 10s
-    }
-  }
-
-  function renderTrack(d) {
-    if (!track.map || !track.info) return;
-    if (!d.found) {
-      track.info.innerHTML = '<span class="opacity-70">Ekki í beinni útsendingu — '
-        + 'flugvélin er annaðhvort ekki komin í loftið eða utan ADS-B þekju.</span>'
-        + anrLink(d);
-      if (track.marker) { track.map.removeLayer(track.marker); track.marker = null; }
-      if (track.line) { track.map.removeLayer(track.line); track.line = null; }
-      track.map.setView(KEF, 6);
-      return;
-    }
-    const pos = [d.lat, d.lon];
-    const altM = d.alt == null ? null : d.alt * 0.3048;
-    const color = altColor(altM);
-    const label = d.callsign || track.flight;
-
-    if (!track.marker) {
-      track.marker = L.marker(pos, { icon: planeIcon(d.track, color, label) }).addTo(track.map);
-    } else {
-      track.marker.setLatLng(pos);
-      track.marker.setIcon(planeIcon(d.track, color, label));
-    }
-    if (track.line) track.map.removeLayer(track.line);
-    track.line = L.polyline([pos, KEF], {
-      color: color, weight: 1.5, opacity: .5, dashArray: '6,6',
-    }).addTo(track.map);
-
-    // Fyrsta staðsetning: römmum inn vélina og völlinn. Eftir það truflum við ekki aðdrátt notandans.
-    if (!track.followed) {
-      track.map.fitBounds(L.latLngBounds([pos, KEF]).pad(0.35));
-      track.followed = true;
-    }
-
-    const dist = haversine(pos, KEF);
-    const bits = [];
-    if (d.reg) bits.push(d.reg);
-    if (d.type) bits.push(d.type);
-    if (d.alt != null) bits.push(Math.round(d.alt).toLocaleString('is-IS') + ' ft');
-    if (d.gs != null) bits.push(Math.round(d.gs) + ' hn');
-    bits.push(fmtKm(dist) + ' km frá KEF');
-    if (d.vert != null && Math.abs(d.vert) > 200) bits.push(d.vert < 0 ? '↓ lækkar' : '↑ hækkar');
-    if (d.stale) bits.push('⏱ síðasta staðsetning · ' + d.age_min + ' mín');
-    track.info.innerHTML = bits.map(b =>
-        '<span class="track-chip' + (d.stale ? ' track-stale' : '') + '">' + b + '</span>').join('')
-      + '<span class="track-src">' + d.source + '</span>' + anrLink(d);
-  }
-
-  function anrLink(d) {
-    return d.anr ? '<a class="track-anr" href="' + d.anr + '" target="_blank" rel="noopener">'
-      + 'AirNavRadar ↗</a>' : '';
-  }
-
   function radarRecenter() {
     if (radarMap) radarMap.setView(KEF, 10);
   }
 
-  // Sameiginlegur grunnkortalagi fyrir Flugsjá og litlu kortin í komutöflunni
-  const baseLayers = [];
-  function tileUrlFor(style, proxy) {
-    return proxy ? '/api/tile/' + style + '/{z}/{x}/{y}.png'
-                 : 'https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png';
-  }
-  function retheme() {   // kortin fylgja ljósu/dökku þema
-    const style = darkMode ? 'dark_all' : 'light_all';
-    baseLayers.forEach(b => { b.style = style; b.layer.setUrl(tileUrlFor(style, b.proxy)); });
-  }
-  function addBaseLayer(map, attribution) {
+  function initRadarMap() {
+    radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
+                .setView(SUDURNES_CENTER, 10);
     const style = darkMode ? 'dark_all' : 'light_all';
     let tileErrors = 0, usingProxy = false;
-    const entry = { layer: null, style: style, get proxy() { return usingProxy; } };
     const layer = L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', {
-      attribution: attribution || '© OpenStreetMap, CARTO',
+      attribution: 'Gögn: flugumferd.is · © OpenStreetMap, CARTO',
       subdomains: 'abcd', maxZoom: 18, crossOrigin: true,
-    }).addTo(map);
+    }).addTo(radarMap);
     // Ef kortaflísar hlaðast ekki beint (net/CDN lokað), skiptum sjálfkrafa yfir á vefþjóninn okkar
     layer.on('tileerror', () => {
       if (usingProxy) return;
       if (++tileErrors < 3) return;
       usingProxy = true;
       console.warn('Kortaflísar blokkaðar — skipti yfir á vefþjón');
-      layer.setUrl(tileUrlFor(entry.style, true));
+      layer.setUrl('/api/tile/' + style + '/{z}/{x}/{y}.png');
     });
-    entry.layer = layer;
-    baseLayers.push(entry);
-    return layer;
-  }
-
-  function initRadarMap() {
-    radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
-                .setView(SUDURNES_CENTER, 10);
-    addBaseLayer(radarMap, 'Gögn: flugumferd.is · © OpenStreetMap, CARTO');
     if (!darkMode) document.getElementById('radarMap').style.background = '#e8e8e8';
     radarMap.on('zoomend', refreshRadar);
 
@@ -577,7 +393,6 @@
     document.getElementById('themeIconMoon').style.display = darkMode ? 'none' : '';
     document.getElementById('themeBtn').title = darkMode ? 'Ljóst þema' : 'Dökkt þema';
     try { localStorage.setItem('kef-theme', darkMode ? 'dark' : 'light'); } catch {}
-    retheme();
   }
   // Sync icons on load
   document.addEventListener('DOMContentLoaded', function() {
@@ -655,8 +470,8 @@
         arrEmpty.classList.remove('hidden');
       } else {
         arrEmpty.classList.add('hidden');
-        arrBody.innerHTML = data.arrivals.map(f => { const rc = getRowColor(f.sta, f.eta); return `<tr style="${rc}" data-flight="${f.flight}">
-          <td class="font-mono font-semibold"><button class="flight-btn" onclick="toggleTrack('${f.flight}')" title="Sjá staðsetningu á korti">${f.flight}</button></td>
+        arrBody.innerHTML = data.arrivals.map(f => { const rc = getRowColor(f.sta, f.eta); return `<tr style="${rc}">
+          <td class="font-mono font-semibold">${f.flight}</td>
           <td>${f.origin}</td>
           <td class="font-mono">${f.sta || '—'}</td>
           <td class="font-mono">${f.eta || '—'}</td>
@@ -666,7 +481,6 @@
         </tr>`; }).join('');
       }
       document.getElementById('arrCount').textContent = data.arrivals.length;
-      applyTrackRow();   // setur opið kort aftur inn eftir endurteikningu (án blikks)
 
       // Departures
       const depBody = document.getElementById('departuresBody');
