@@ -25,6 +25,9 @@
     .track-chip { background: rgba(96,165,250,.16); border-radius: 999px; padding: .05rem .5rem;
                   font-family: ui-monospace, monospace; }
     .track-src { opacity: .45; font-size: .7rem; }
+    .track-stale { opacity: .6; border-style: dashed !important; }
+    .track-anr { font-size: .7rem; opacity: .6; text-decoration: underline; margin-left: .25rem; }
+    .track-anr:hover { opacity: 1; }
     .track-map { height: 260px; width: 100%; background: #0b1220; }
     html[data-theme="dark"] .track-map .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
     /* Dökka kortið er mjög dauft — lyftum birtu svo strandlína og vegir sjáist vel */
@@ -383,7 +386,8 @@
     if (!track.map || !track.info) return;
     if (!d.found) {
       track.info.innerHTML = '<span class="opacity-70">Ekki í beinni útsendingu — '
-        + 'flugvélin er líklega ekki komin í loftið.</span>';
+        + 'flugvélin er annaðhvort ekki komin í loftið eða utan ADS-B þekju.</span>'
+        + anrLink(d);
       if (track.marker) { track.map.removeLayer(track.marker); track.marker = null; }
       if (track.line) { track.map.removeLayer(track.line); track.line = null; }
       track.map.setView(KEF, 6);
@@ -419,8 +423,15 @@
     if (d.gs != null) bits.push(Math.round(d.gs) + ' hn');
     bits.push(fmtKm(dist) + ' km frá KEF');
     if (d.vert != null && Math.abs(d.vert) > 200) bits.push(d.vert < 0 ? '↓ lækkar' : '↑ hækkar');
-    track.info.innerHTML = bits.map(b => '<span class="track-chip">' + b + '</span>').join('')
-      + '<span class="track-src">' + d.source + '</span>';
+    if (d.stale) bits.push('⏱ síðasta staðsetning · ' + d.age_min + ' mín');
+    track.info.innerHTML = bits.map(b =>
+        '<span class="track-chip' + (d.stale ? ' track-stale' : '') + '">' + b + '</span>').join('')
+      + '<span class="track-src">' + d.source + '</span>' + anrLink(d);
+  }
+
+  function anrLink(d) {
+    return d.anr ? '<a class="track-anr" href="' + d.anr + '" target="_blank" rel="noopener">'
+      + 'AirNavRadar ↗</a>' : '';
   }
 
   function radarRecenter() {
