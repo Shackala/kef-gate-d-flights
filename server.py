@@ -7,6 +7,7 @@ import json
 import re
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
@@ -536,24 +537,126 @@ def _find_local(cands):
     return None
 
 
-def _find_global(cands):
-    """Varaleið: adsb.lol — hnattræn þekja fyrir vélar utan íslenska straumsins."""
-    for cs in cands[:3]:
-        try:
-            r = requests.get(
-                f"https://api.adsb.lol/v2/callsign/{cs}",
-                timeout=8,
-                headers={"User-Agent": "kef-fids/1.0"},
-            )
-            if r.status_code != 200:
-                continue
-            for ac in r.json().get("ac", []):
-                hit = _shape(ac, "adsb.lol", cs)
-                if hit:
-                    return hit
-        except Exception as e:
-            print(f"adsb.lol lookup error for {cs}: {e}")
+_GLOBAL_FEEDS = (
+    ("adsb.lol", "https://api.adsb.lol/v2/callsign/{cs}"),
+    ("adsb.fi", "https://opendata.adsb.fi/api/v2/callsign/{cs}"),
+)
+
+
+# Veitur sem svara hægt (t.d. vegna fyrirspurnamarka) eru hvíldar um stund.
+_feed_penalty = {}
+FEED_TIMEOUT = 4.0
+FEED_DEADLINE = 6.0
+
+
+def _feed_lookup(name, tmpl, cs):
+    if time.time() < _feed_penalty.get(name, 0):
+        return None
+    try:
+        r = requests.get(
+            tmpl.format(cs=cs),
+            timeout=(3, FEED_TIMEOUT),
+            headers={"User-Agent": "kef-fids/1.0"},
+        )
+        if r.status_code != 200:
+            if r.status_code in (429, 403):
+                _feed_penalty[name] = time.time() + 300
+            return None
+        for ac in r.json().get("ac", []) or []:
+            hit = _shape(ac, name, cs)
+            if hit:
+                return hit
+    except requests.exceptions.Timeout:
+        _feed_penalty[name] = time.time() + 120  # hvílum veituna í 2 mín
+    except Exception as e:
+        print(f"{name} lookup error for {cs}: {e}")
     return None
+
+
+def _find_global(cands):
+    """Hnattrænar ADS-B veitur — samhliða fyrirspurnir með föstum tímafresti."""
+    jobs = [(n, t, cs) for cs in cands[:3] for n, t in _GLOBAL_FEEDS]
+    if not jobs:
+        return None
+    pool = ThreadPoolExecutor(max_workers=len(jobs))
+    try:
+        futures = [pool.submit(_feed_lookup, *j) for j in jobs]
+        deadline = time.time() + FEED_DEADLINE
+        for f in futures:
+            try:
+                hit = f.result(timeout=max(0.1, deadline - time.time()))
+            except Exception:
+                continue
+            if hit:
+                return hit
+    finally:
+        pool.shutdown(wait=False)
+    return None
+
+
+# --- OpenSky: breið þekja yfir Atlantshafi/N-Ameríku, sótt í einu lagi og geymt ---
+_OPENSKY_BBOX = "lamin=30&lomin=-145&lamax=80&lomax=45"
+_opensky_cache = {"t": 0.0, "by_cs": {}, "blocked_until": 0.0}
+_opensky_lock = threading.Lock()
+
+
+def _opensky_snapshot():
+    """Nær heildarmynd frá OpenSky (eitt kall fyrir allar vélar, geymt í 90 sek)."""
+    now = time.time()
+    with _opensky_lock:
+        if now - _opensky_cache["t"] < 90 or now < _opensky_cache["blocked_until"]:
+            return _opensky_cache["by_cs"]
+    try:
+        r = requests.get(
+            f"https://opensky-network.org/api/states/all?{_OPENSKY_BBOX}",
+            timeout=15,
+            headers={"User-Agent": "kef-fids/1.0"},
+        )
+        if r.status_code != 200:
+            with _opensky_lock:
+                # Farið yfir fyrirspurnamörk — hvílum veituna í 10 mínútur.
+                _opensky_cache["blocked_until"] = now + 600
+            return _opensky_cache["by_cs"]
+        by_cs = {}
+        for s in r.json().get("states") or []:
+            cs = (s[1] or "").strip().upper()
+            if not cs or s[5] is None or s[6] is None:
+                continue
+            alt_m = s[13] if s[13] is not None else s[7]
+            by_cs[cs] = {
+                "lat": s[6],
+                "lon": s[5],
+                "alt_baro": round(alt_m * 3.28084) if alt_m is not None else None,
+                "gs": round(s[9] * 1.94384, 1) if s[9] is not None else None,
+                "track": s[10],
+                "baro_rate": round(s[11] * 196.85) if s[11] is not None else None,
+                "flight": cs,
+                "r": None,
+                "t": None,
+            }
+        with _opensky_lock:
+            _opensky_cache["t"] = now
+            _opensky_cache["by_cs"] = by_cs
+        return by_cs
+    except Exception as e:
+        print(f"opensky error: {e}")
+        return _opensky_cache["by_cs"]
+
+
+def _find_opensky(cands):
+    snap = _opensky_snapshot()
+    for cs in cands:
+        ac = snap.get(cs.upper())
+        if ac:
+            hit = _shape(ac, "opensky", cs)
+            if hit:
+                return hit
+    return None
+
+
+# Síðasta þekkta staðsetning — brúar ADS-B eyðuna yfir miðju Atlantshafi.
+_last_seen = {}
+LAST_SEEN_MAX_AGE = 3 * 3600
 
 
 @app.route("/api/track/<flight>")
@@ -570,9 +673,25 @@ def track_api(flight):
     if not cands:
         return jsonify({"found": False, "reason": "bad_flight"})
 
-    result = _find_local(cands) or _find_global(cands)
-    if not result:
-        result = {"found": False, "reason": "not_airborne", "tried": cands[:3]}
+    # OpenSky-myndin er venjulega í minni (uppfærð á 90 sek) svo hún svarar samstundis.
+    result = _find_local(cands) or _find_opensky(cands) or _find_global(cands)
+
+    if result:
+        with _track_lock:
+            if len(_last_seen) > 500:
+                _last_seen.clear()
+            _last_seen[key] = (now, dict(result))
+    else:
+        # Engin bein þekja (t.d. mitt á Atlantshafi) — sýnum síðustu þekktu stöðu.
+        with _track_lock:
+            prev = _last_seen.get(key)
+        if prev and now - prev[0] < LAST_SEEN_MAX_AGE:
+            result = dict(prev[1])
+            result["stale"] = True
+            result["age_min"] = int((now - prev[0]) / 60)
+        else:
+            result = {"found": False, "reason": "not_airborne", "tried": cands[:3]}
+    result["anr"] = f"https://www.airnavradar.com/flight/{key}"
 
     with _track_lock:
         if len(_track_cache) > 500:
