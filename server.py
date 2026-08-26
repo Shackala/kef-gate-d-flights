@@ -458,6 +458,129 @@ def radar_api():
         )
 
 
+# ---------------------------------------------------------------------------
+# Eftirfylgni með stakri flugvél  (IATA flugnúmer -> ADS-B kallmerki)
+# ---------------------------------------------------------------------------
+
+# IATA flugfélagskóði -> ICAO kallmerkjaforskeyti (flugfélög sem fljúga um KEF)
+AIRLINE_ICAO = {
+    "FI": "ICE", "OG": "FPY", "DL": "DAL", "UA": "UAL", "AA": "AAL",
+    "BA": "BAW", "LH": "DLH", "SK": "SAS", "DY": "NOZ", "D8": "NSZ",
+    "W6": "WZZ", "EW": "EWG", "LX": "SWR", "KL": "KLM", "AF": "AFR",
+    "IB": "IBE", "TP": "TAP", "AY": "FIN", "OS": "AUA", "SN": "BEL",
+    "EI": "EIN", "TK": "THY", "VY": "VLG", "PC": "PGT", "WK": "EDW",
+    "LS": "EXS", "U2": "EZY", "FR": "RYR", "AC": "ACA", "TS": "TSC",
+    "WS": "WJA", "JL": "JAL", "NH": "ANA", "LO": "LOT", "AZ": "ITY",
+    "A3": "AEE", "SU": "AFL", "TU": "TAR", "MT": "TCX", "BY": "TOM",
+    "EJU": "EJU", "N0": "NOZ", "RC": "FLI", "NO": "NOS", "HV": "TRA",
+    "6B": "BLX", "QS": "TVS", "X3": "TUI", "DE": "CFG", "ET": "ETH",
+    "QR": "QTR", "EK": "UAE", "CX": "CPA", "5X": "UPS", "FX": "FDX",
+    "3S": "BOX", "QY": "BCS", "M6": "AJT", "GG": "CVA", "K4": "CKS",
+}
+
+_track_cache = {}
+_track_lock = threading.Lock()
+TRACK_TTL = 8  # sekúndur
+
+
+def _callsign_candidates(flight):
+    """Býr til líkleg ADS-B kallmerki út frá IATA flugnúmeri, t.d. FI672 -> ICE672."""
+    m = re.match(r"^\s*([A-Z0-9]{2,3}?)\s*0*(\d{1,4})\s*$", (flight or "").upper())
+    if not m:
+        return []
+    code, num = m.group(1), m.group(2)
+    icao = AIRLINE_ICAO.get(code, code)
+    out = []
+    for pfx in (icao, code):
+        for n in (num, num.zfill(3), num.zfill(4)):
+            cs = f"{pfx}{n}"
+            if cs not in out:
+                out.append(cs)
+    return out
+
+
+def _shape(ac, source, callsign):
+    """Sameiginlegt svarform fyrir báðar gagnaveitur."""
+    lat, lon = ac.get("lat"), ac.get("lon")
+    if lat is None or lon is None:
+        return None
+    alt = ac.get("alt_baro")
+    if isinstance(alt, str):  # "ground"
+        alt = 0
+    return {
+        "found": True,
+        "callsign": (ac.get("flight") or callsign or "").strip(),
+        "lat": lat,
+        "lon": lon,
+        "alt": alt,
+        "gs": ac.get("gs"),
+        "track": ac.get("track"),
+        "reg": ac.get("r"),
+        "type": ac.get("t"),
+        "vert": ac.get("baro_rate"),
+        "source": source,
+    }
+
+
+def _find_local(cands):
+    """Leitar fyrst í beinu straumnum frá flugumferd.is (besta þekjan yfir N-Atlantshafi)."""
+    with radar_lock:
+        fleet = list(radar_state["aircraft"])
+    wanted = {c.upper() for c in cands}
+    for ac in fleet:
+        cs = (ac.get("flight") or "").strip().upper()
+        if cs and cs in wanted:
+            hit = _shape(ac, "flugumferd.is", cs)
+            if hit:
+                return hit
+    return None
+
+
+def _find_global(cands):
+    """Varaleið: adsb.lol — hnattræn þekja fyrir vélar utan íslenska straumsins."""
+    for cs in cands[:3]:
+        try:
+            r = requests.get(
+                f"https://api.adsb.lol/v2/callsign/{cs}",
+                timeout=8,
+                headers={"User-Agent": "kef-fids/1.0"},
+            )
+            if r.status_code != 200:
+                continue
+            for ac in r.json().get("ac", []):
+                hit = _shape(ac, "adsb.lol", cs)
+                if hit:
+                    return hit
+        except Exception as e:
+            print(f"adsb.lol lookup error for {cs}: {e}")
+    return None
+
+
+@app.route("/api/track/<flight>")
+def track_api(flight):
+    """Staðsetning einnar flugvélar eftir flugnúmeri."""
+    key = (flight or "").upper().strip()
+    now = time.time()
+    with _track_lock:
+        hit = _track_cache.get(key)
+        if hit and now - hit[0] < TRACK_TTL:
+            return jsonify(hit[1])
+
+    cands = _callsign_candidates(key)
+    if not cands:
+        return jsonify({"found": False, "reason": "bad_flight"})
+
+    result = _find_local(cands) or _find_global(cands)
+    if not result:
+        result = {"found": False, "reason": "not_airborne", "tried": cands[:3]}
+
+    with _track_lock:
+        if len(_track_cache) > 500:
+            _track_cache.clear()
+        _track_cache[key] = (now, result)
+    return jsonify(result)
+
+
 _TILE_STYLES = {"dark_all", "light_all", "dark_nolabels", "light_nolabels"}
 _tile_cache = {}
 
