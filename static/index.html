@@ -465,8 +465,9 @@
   function initRadarMap() {
     radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
                 .setView(SUDURNES_CENTER, 10);
-    addBaseLayer(radarMap, 'Gögn: flugumferd.is · Myndir: Esri, Maxar, Earthstar Geographics');
-    radarMap.on('zoomend', refreshRadar);
+    addBaseLayer(radarMap, 'Gögn: flugumferd.is, adsb.lol, OpenSky · Myndir: Esri, Maxar, Earthstar Geographics');
+    let moveDebounce = null;
+    radarMap.on('moveend zoomend', () => { clearTimeout(moveDebounce); moveDebounce = setTimeout(refreshRadar, 250); });
 
     // Merkja Keflavíkurflugvöll
     L.circleMarker(KEF, { radius: 6, color: '#facc15', weight: 2, fillColor: '#facc15', fillOpacity: .9 })
@@ -476,13 +477,23 @@
 
   async function refreshRadar() {
     try {
-      const res = await fetch('/api/radar', { signal: AbortSignal.timeout(8000) });
+      const b0 = radarMap.getBounds().pad(0.15);
+      const bboxQ = [b0.getSouth(), b0.getWest(), b0.getNorth(), b0.getEast()].map(v => v.toFixed(2)).join(',');
+      const res = await fetch('/api/radar?bbox=' + bboxQ, { signal: AbortSignal.timeout(8000) });
       if (!res.ok) throw new Error('radar http ' + res.status);
       const data = await res.json();
-      const list = Array.isArray(data.aircraft) ? data.aircraft : [];
+      if (!radarMap) return;
+      let list = Array.isArray(data.aircraft) ? data.aircraft : [];
       const seen = new Set();
       let inView = 0;
       const bounds = radarMap.getBounds();
+      // Takmarka fjölda teiknaðra véla (síminn þakkar fyrir): þær næstu miðju kortsins fyrst
+      const MAX_DRAW = 900, total = list.length;
+      if (list.length > MAX_DRAW) {
+        const c = radarMap.getCenter();
+        list = list.map(ac => [Math.hypot((ac.lat - c.lat), (ac.lon - c.lng) * Math.cos(c.lat * Math.PI / 180)), ac])
+                   .sort((a, b) => a[0] - b[0]).slice(0, MAX_DRAW).map(x => x[1]);
+      }
 
       list.forEach(ac => {
         if (typeof ac.lat !== 'number' || typeof ac.lon !== 'number') return;
@@ -504,7 +515,8 @@
           + (altM != null ? 'Flughæð: <b>' + altM.toLocaleString('is-IS') + ' m</b><br/>' : '')
           + (typeof ac.gs === 'number' ? 'Hraði: <b>' + Math.round(ac.gs) + ' hn</b><br/>' : '')
           + (typeof ac.track === 'number' ? 'Stefna: <b>' + Math.round(ac.track) + '°</b><br/>' : '')
-          + (ac.squawk ? 'Svarkóði: <b>' + ac.squawk + '</b>' : '')
+          + (ac.squawk ? 'Svarkóði: <b>' + ac.squawk + '</b><br/>' : '')
+          + '<span style="opacity:.6">Gögn: ' + (ac.src || 'flugumferd.is') + '</span>'
           + '</div>';
 
         let entry = radarMarkers[id];
@@ -528,10 +540,15 @@
       });
 
       const st = document.getElementById('radarStatus');
+      const w = data.wide;
+      let wideTxt = '';
+      if (w && w.mode === 'cells') wideTxt = ' · +' + w.added + ' víðar (adsb.lol)';
+      else if (w && w.mode === 'opensky') wideTxt = ' · +' + w.added + ' víðar (OpenSky' + (w.age ? ', ~' + Math.round(w.age / 60) + ' mín, áætluð staða' : '') + ')';
+      const capTxt = total > MAX_DRAW ? ' · sýni ' + MAX_DRAW + ' af ' + total : '';
       if (data.status === 'connected') {
-        st.textContent = '🟢 ' + inView + ' vélar í sýn · ' + list.length + ' yfir Íslandi';
+        st.textContent = '🟢 ' + inView + ' vélar í sýn · ' + (data.local ?? 0) + ' yfir Íslandi' + wideTxt + capTxt;
       } else {
-        st.textContent = '🔴 Tenging niðri — reyni aftur…';
+        st.textContent = '🔴 flugumferd.is niðri — reyni aftur…' + wideTxt;
       }
     } catch (e) {
       console.warn('Radar fetch failed:', e);
