@@ -8,7 +8,7 @@ import re
 import time
 import threading
 from concurrent.futures import ThreadPoolExecutor
-from flask import Flask, jsonify, send_from_directory
+from flask import Flask, jsonify, request, send_from_directory
 from flask_cors import CORS
 import requests
 from bs4 import BeautifulSoup
@@ -471,17 +471,217 @@ _radar_thread.start()
 
 @app.route("/api/radar")
 def radar_api():
+    """Flugsjá: flugumferd.is (Ísland/N-Atlantshaf) + víðari þekja fyrir sýnilega svæðið."""
     with radar_lock:
         age = time.time() - radar_state["updated"] if radar_state["updated"] else None
-        return jsonify(
-            {
-                "aircraft": radar_state["aircraft"],
-                "now": radar_state["now"],
-                "age": age,
-                "status": radar_state["status"],
-                "source": "flugumferd.is",
-            }
-        )
+        local = list(radar_state["aircraft"])
+        status = radar_state["status"]
+
+    bbox = _parse_bbox(request.args.get("bbox"))
+    wide, wide_info = ([], None)
+    if bbox:
+        wide, wide_info = _wide_area(bbox)
+
+    seen = set()
+    merged = []
+    for ac in local:
+        k = (ac.get("hex") or ac.get("r") or ac.get("flight") or "").upper()
+        if k:
+            seen.add(k)
+        merged.append(ac)
+    added = 0
+    for ac in wide:
+        k = (ac.get("hex") or ac.get("r") or ac.get("flight") or "").upper()
+        if not k or k in seen:
+            continue
+        seen.add(k)
+        merged.append(ac)
+        added += 1
+
+    return jsonify(
+        {
+            "aircraft": merged,
+            "now": time.time(),
+            "age": age,
+            "status": status,
+            "source": "flugumferd.is",
+            "local": len(local),
+            "wide": {**(wide_info or {}), "added": added} if wide_info else None,
+        }
+    )
+
+
+# ---------------------------------------------------------------------------
+# Víð þekja fyrir Flugsjá — adsb.lol í 6°x6° reitum, OpenSky þegar sýn er mjög víð
+# ---------------------------------------------------------------------------
+
+CELL_DEG = 6
+CELL_RADIUS_NM = 250
+MAX_CELLS = 20            # fleiri reitir en þetta -> OpenSky yfirlitsmynd
+CELL_FRESH = 12           # sek — reitur telst ferskur
+CELL_HOT_TTL = 40         # sek — reitur uppfærður í bakgrunni eftir síðustu beiðni
+CELL_WORKER_PERIOD = 2
+CELL_MIN_GAP = 1.0        # sek milli fyrirspurna (adsb.fi: 1 req/s)
+_cells = {}               # (i, j) -> {"ac": [...], "ts": t, "wanted": t}
+_cells_lock = threading.Lock()
+_cell_pool = ThreadPoolExecutor(max_workers=2)
+_rate_lock = threading.Lock()
+_rate_last = [0.0]
+
+
+def _rate_wait():
+    with _rate_lock:
+        gap = CELL_MIN_GAP - (time.time() - _rate_last[0])
+        if gap > 0:
+            time.sleep(gap)
+        _rate_last[0] = time.time()
+
+# adsb.fi leyfir 1 fyrirspurn/sek stöðugt; adsb.lol takmarkar mun harðar (420/429) og er varaleið.
+_AREA_FEEDS = (
+    ("adsb.fi", "https://opendata.adsb.fi/api/v2/lat/{lat}/lon/{lon}/dist/{r}"),
+    ("adsb.lol", "https://api.adsb.lol/v2/point/{lat}/{lon}/{r}"),
+)
+
+
+def _ac_list(payload):
+    """adsb.lol notar lykilinn "ac", adsb.fi notar "aircraft"."""
+    return (payload.get("ac") or payload.get("aircraft") or []) if isinstance(payload, dict) else []
+
+
+def _parse_bbox(s):
+    try:
+        lamin, lomin, lamax, lomax = [float(x) for x in s.split(",")]
+    except Exception:
+        return None
+    lamin, lamax = max(-85.0, min(lamin, lamax)), min(85.0, max(lamin, lamax))
+    lomin, lomax = max(-180.0, min(lomin, lomax)), min(180.0, max(lomin, lomax))
+    if lamax - lamin <= 0 or lomax - lomin <= 0:
+        return None
+    return (lamin, lomin, lamax, lomax)
+
+
+def _cells_for(bbox):
+    lamin, lomin, lamax, lomax = bbox
+    import math
+    i0, i1 = math.floor(lamin / CELL_DEG), math.floor((lamax - 1e-9) / CELL_DEG)
+    j0, j1 = math.floor(lomin / CELL_DEG), math.floor((lomax - 1e-9) / CELL_DEG)
+    return [(i, j) for i in range(i0, i1 + 1) for j in range(j0, j1 + 1)]
+
+
+def _fetch_cell(cell):
+    i, j = cell
+    lat = i * CELL_DEG + CELL_DEG / 2
+    lon = j * CELL_DEG + CELL_DEG / 2
+    for name, tmpl in _AREA_FEEDS:
+        if time.time() < _feed_penalty.get(name, 0):
+            continue
+        _rate_wait()
+        try:
+            r = requests.get(
+                tmpl.format(lat=f"{lat:.2f}", lon=f"{lon:.2f}", r=CELL_RADIUS_NM),
+                timeout=(2, 5),
+                headers={"User-Agent": "kef-fids/1.0"},
+            )
+            if r.status_code != 200:
+                print(f"cell {cell} {name}: http {r.status_code}")
+                if r.status_code in (420, 429):
+                    _feed_penalty[name] = time.time() + 3   # örstutt hvíld, síðan aftur
+                elif r.status_code == 403:
+                    _feed_penalty[name] = time.time() + 120
+                continue
+            ac = [a for a in _ac_list(r.json()) if a.get("lat") is not None and a.get("lon") is not None]
+            for a in ac:
+                a["src"] = name
+            with _cells_lock:
+                ent = _cells.setdefault(cell, {"ac": [], "ts": 0, "wanted": 0})
+                ent["ac"], ent["ts"] = ac, time.time()
+            return True
+        except requests.exceptions.RequestException as e:
+            print(f"cell {cell} {name}: net {e!r}"[:160])
+            _feed_penalty[name] = time.time() + 30
+        except Exception as e:
+            print(f"cell {cell} {name}: {e!r}"[:160])
+    return False
+
+
+def _cell_worker():
+    """Heldur reitum sem einhver horfir á ferskum — beiðnir bíða aldrei eftir neti."""
+    while True:
+        now = time.time()
+        with _cells_lock:
+            stale = [c for c, e in _cells.items() if now - e["wanted"] < CELL_HOT_TTL and now - e["ts"] > CELL_FRESH - 1]
+            for c in [c for c, e in _cells.items() if now - e["wanted"] > 600]:
+                _cells.pop(c, None)
+        if stale:
+            stale.sort(key=lambda c: _cells[c]["ts"])
+            list(_cell_pool.map(_fetch_cell, stale))
+        time.sleep(CELL_WORKER_PERIOD)
+
+
+threading.Thread(target=_cell_worker, daemon=True).start()
+
+
+def _in_bbox(lat, lon, bbox):
+    lamin, lomin, lamax, lomax = bbox
+    return lamin <= lat <= lamax and lomin <= lon <= lomax
+
+
+def _wide_area(bbox):
+    cells = _cells_for(bbox)
+    if len(cells) > MAX_CELLS:
+        return _wide_opensky(bbox)
+
+    now = time.time()
+    with _cells_lock:
+        for c in cells:
+            _cells.setdefault(c, {"ac": [], "ts": 0, "wanted": 0})["wanted"] = now
+        cold = [c for c in cells if _cells[c]["ts"] == 0]
+    if cold:
+        # Fyrsta skipti sem horft er á þennan reit: stutt, afmörkuð bið, miðjan fyrst
+        ci, cj = (bbox[0] + bbox[2]) / 2 / CELL_DEG, (bbox[1] + bbox[3]) / 2 / CELL_DEG
+        cold.sort(key=lambda c: (c[0] + .5 - ci) ** 2 + (c[1] + .5 - cj) ** 2)
+        futs = [_cell_pool.submit(_fetch_cell, c) for c in cold]
+        deadline = now + 2.5
+        for f in futs:
+            try:
+                f.result(timeout=max(0.05, deadline - time.time()))
+            except Exception:
+                pass
+
+    out, oldest = [], 0
+    with _cells_lock:
+        for c in cells:
+            e = _cells.get(c)
+            if not e or not e["ts"]:
+                continue
+            oldest = max(oldest, now - e["ts"])
+            out.extend(a for a in e["ac"] if _in_bbox(a["lat"], a["lon"], bbox))
+    return out, {"mode": "cells", "cells": len(cells), "age": round(oldest)}
+
+
+def _wide_opensky(bbox):
+    """Mjög víð sýn: OpenSky yfirlitsmynd, færð áfram eftir hraða og stefnu (dead reckoning)."""
+    import math
+    with _opensky_lock:
+        snap, ts = _opensky_by_cs, _opensky_ts
+    age = time.time() - ts if ts else None
+    out = []
+    for ac in snap.values():
+        lat, lon = ac["lat"], ac["lon"]
+        if age and ac.get("gs") and ac.get("track") is not None and ac.get("alt_baro"):
+            d_nm = ac["gs"] * min(age, 1200) / 3600.0
+            brg = math.radians(ac["track"])
+            lat = lat + (d_nm / 60.0) * math.cos(brg)
+            lon = lon + (d_nm / 60.0) * math.sin(brg) / max(0.2, math.cos(math.radians(lat)))
+        if _in_bbox(lat, lon, bbox):
+            out.append({**ac, "lat": lat, "lon": lon, "src": "opensky"})
+    total = len(out)
+    if total > 1500:  # of stórt svar fyrir vafrann — þær næstu miðju sýnar
+        cla, clo = (bbox[0] + bbox[2]) / 2, (bbox[1] + bbox[3]) / 2
+        k = math.cos(math.radians(cla))
+        out.sort(key=lambda a: (a["lat"] - cla) ** 2 + ((a["lon"] - clo) * k) ** 2)
+        out = out[:1500]
+    return out, {"mode": "opensky", "age": round(age) if age else None, "total": total}
 
 
 # ---------------------------------------------------------------------------
@@ -587,7 +787,7 @@ def _feed_lookup(name, tmpl, cs):
             if r.status_code in (429, 403):
                 _feed_penalty[name] = time.time() + 300
             return None
-        for ac in r.json().get("ac", []) or []:
+        for ac in _ac_list(r.json()):
             hit = _shape(ac, name, cs)
             if hit:
                 return hit
@@ -620,13 +820,14 @@ def _find_global(cands, deadline):
 # --- OpenSky: breið þekja yfir Atlantshafi/N-Ameríku, sótt í bakgrunni ---
 _OPENSKY_BBOX = "lamin=30&lomin=-145&lamax=80&lomax=45"
 _opensky_by_cs = {}
+_opensky_ts = 0
 _opensky_lock = threading.Lock()
-OPENSKY_PERIOD = 420  # sek — virðir fyrirspurnamörk ókeypis aðgangs
+OPENSKY_PERIOD = 900  # sek — 96 köll x 4 einingar = innan 400 eininga dagskvóta án innskráningar
 
 
 def _opensky_worker():
     """Sækir heildarmynd frá OpenSky reglulega. Ekkert kall gerist inni í fyrirspurn."""
-    global _opensky_by_cs
+    global _opensky_by_cs, _opensky_ts
     while True:
         try:
             r = requests.get(
@@ -655,6 +856,7 @@ def _opensky_worker():
                     }
                 with _opensky_lock:
                     _opensky_by_cs = by_cs
+                    _opensky_ts = time.time()
         except Exception as e:
             print(f"opensky error: {e}")
         time.sleep(OPENSKY_PERIOD)
