@@ -30,9 +30,6 @@
     .track-anr { font-size: .7rem; opacity: .6; text-decoration: underline; margin-left: .25rem; }
     .track-anr:hover { opacity: 1; }
     .track-map { height: 260px; width: 100%; background: #0b1220; }
-    html[data-theme="dark"] .track-map .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
-    /* Dökka kortið er mjög dauft — lyftum birtu svo strandlína og vegir sjáist vel */
-    html[data-theme="dark"] #radarMap .leaflet-tile-pane { filter: brightness(2.1) contrast(1.15) saturate(1.1); }
     #radarMap .leaflet-control-attribution { font-size: 9px; }
     .plane-icon { transition: transform .5s linear; }
     .plane-icon svg { display:block; filter: drop-shadow(0 0 2px rgba(0,0,0,.8)); }
@@ -352,7 +349,7 @@
     const mapDiv = track.host.querySelector('.track-map');
     if (!track.map) {
       track.map = L.map(mapDiv, { zoomControl: true, attributionControl: true }).setView(KEF, 6);
-      addBaseLayer(track.map, '© OpenStreetMap, CARTO');
+      addBaseLayer(track.map, 'Myndir: Esri, Maxar');
       L.circleMarker(KEF, { radius: 5, color: '#facc15', weight: 2, fillColor: '#facc15', fillOpacity: .9 })
         .addTo(track.map).bindTooltip('BIKF — Keflavík');
     }
@@ -439,42 +436,36 @@
     if (radarMap) radarMap.setView(KEF, 10);
   }
 
-  // Sameiginlegur grunnkortalagi fyrir Flugsjá og litlu kortin í komutöflunni
-  const baseLayers = [];
-  function tileUrlFor(style, proxy) {
-    return proxy ? '/api/tile/' + style + '/{z}/{x}/{y}.png'
-                 : 'https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png';
-  }
-  function retheme() {   // kortin fylgja ljósu/dökku þema
-    const style = darkMode ? 'dark_all' : 'light_all';
-    baseLayers.forEach(b => { b.style = style; b.layer.setUrl(tileUrlFor(style, b.proxy)); });
+  // Sameiginlegt grunnkort fyrir Flugsjá og litlu kortin í komutöflunni:
+  // Esri gervitunglamyndir + örnefni/landamæri ofan á (ekkert API-lykil þörf)
+  const ESRI = 'https://server.arcgisonline.com/ArcGIS/rest/services/';
+  const TILE_SETS = {
+    sat:    { direct: ESRI + 'World_Imagery/MapServer/tile/{z}/{y}/{x}', proxy: '/api/tile/sat/{z}/{x}/{y}' },
+    labels: { direct: ESRI + 'Reference/World_Boundaries_and_Places/MapServer/tile/{z}/{y}/{x}', proxy: '/api/tile/labels/{z}/{x}/{y}' },
+  };
+  function retheme() { /* gervitunglakort er eins í báðum þemum */ }
+  function makeTileLayer(kind, opts) {
+    let errors = 0, usingProxy = false;
+    const layer = L.tileLayer(TILE_SETS[kind].direct, opts);
+    // Ef flísar hlaðast ekki beint (net/CDN lokað), skiptum sjálfkrafa yfir á vefþjóninn okkar
+    layer.on('tileerror', () => {
+      if (usingProxy || ++errors < 3) return;
+      usingProxy = true;
+      console.warn('Kortaflísar (' + kind + ') blokkaðar — skipti yfir á vefþjón');
+      layer.setUrl(TILE_SETS[kind].proxy);
+    });
+    return layer;
   }
   function addBaseLayer(map, attribution) {
-    const style = darkMode ? 'dark_all' : 'light_all';
-    let tileErrors = 0, usingProxy = false;
-    const entry = { layer: null, style: style, get proxy() { return usingProxy; } };
-    const layer = L.tileLayer('https://{s}.basemaps.cartocdn.com/' + style + '/{z}/{x}/{y}{r}.png', {
-      attribution: attribution || '© OpenStreetMap, CARTO',
-      subdomains: 'abcd', maxZoom: 18, crossOrigin: true,
-    }).addTo(map);
-    // Ef kortaflísar hlaðast ekki beint (net/CDN lokað), skiptum sjálfkrafa yfir á vefþjóninn okkar
-    layer.on('tileerror', () => {
-      if (usingProxy) return;
-      if (++tileErrors < 3) return;
-      usingProxy = true;
-      console.warn('Kortaflísar blokkaðar — skipti yfir á vefþjón');
-      layer.setUrl(tileUrlFor(entry.style, true));
-    });
-    entry.layer = layer;
-    baseLayers.push(entry);
-    return layer;
+    const sat = makeTileLayer('sat', { attribution: attribution || 'Myndir: Esri, Maxar, Earthstar Geographics', maxZoom: 18, crossOrigin: true }).addTo(map);
+    makeTileLayer('labels', { maxZoom: 18, crossOrigin: true, pane: 'overlayPane', opacity: .9 }).addTo(map);
+    return sat;
   }
 
   function initRadarMap() {
     radarMap = L.map('radarMap', { zoomControl: true, attributionControl: true })
                 .setView(SUDURNES_CENTER, 10);
-    addBaseLayer(radarMap, 'Gögn: flugumferd.is · © OpenStreetMap, CARTO');
-    if (!darkMode) document.getElementById('radarMap').style.background = '#e8e8e8';
+    addBaseLayer(radarMap, 'Gögn: flugumferd.is · Myndir: Esri, Maxar, Earthstar Geographics');
     radarMap.on('zoomend', refreshRadar);
 
     // Merkja Keflavíkurflugvöll
