@@ -28,6 +28,22 @@ Open http://localhost:5000
 3. Select your repo — Railway auto-detects the Procfile
 4. Click **Generate Domain** in Settings to get your public URL
 
+## Afköst (mikilvægt)
+
+Vefþjónninn sækir **aldrei** gögn af neti inni í fyrirspurn notanda. Bakgrunnsþræðir
+halda öllu fersku í minni:
+
+| Þráður | Tíðni | Hlutverk |
+|---|---|---|
+| `_flights_worker` | 15 s | kefairport.is FIDS + fraktflug |
+| `_radar_worker` | samfellt | flugumferd.is WebSocket |
+| `_opensky_worker` | 7 mín | breið þekja yfir N-Atlantshafi/N-Ameríku |
+| `_track_worker` | 6 s | flug sem notandinn hefur opnað nýlega |
+
+Fyrirspurnir svara því úr minni (~1–5 ms). `Procfile` keyrir gunicorn með
+`gthread` og 24 þráðum — með einum `sync`-þræði (sjálfgefið) raðast allar
+fyrirspurnir í biðröð og vefurinn verður mjög hægur.
+
 ## Tech Stack
 
 - **Backend:** Python / Flask / BeautifulSoup

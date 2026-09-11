@@ -7,6 +7,7 @@ import json
 import re
 import time
 import threading
+from concurrent.futures import ThreadPoolExecutor
 from flask import Flask, jsonify, send_from_directory
 from flask_cors import CORS
 import requests
@@ -355,15 +356,40 @@ def scrape_flights():
 
 
 def get_cached_flights():
-    """Return cached data or scrape fresh if stale."""
+    """Skilar síðustu vistuðu gögnum — sækir ALDREI af neti inni í fyrirspurn.
+
+    Bakgrunnsþráður heldur skyndiminninu fersku, svo vefurinn svarar samstundis
+    í stað þess að bíða eftir kefairport.is.
+    """
     with lock:
-        now = time.time()
-        if cache["data"] is None or (now - cache["timestamp"]) > CACHE_TTL:
+        if cache["data"] is not None:
+            return cache["data"]
+
+    # Kaldræsing: fyrsta fyrirspurn bíður eftir fyrstu sókn (mest 20 sek).
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        time.sleep(0.25)
+        with lock:
+            if cache["data"] is not None:
+                return cache["data"]
+    return None
+
+
+def _flights_worker():
+    """Uppfærir flugtöfluna í bakgrunni svo enginn notandi bíði eftir vefsókn."""
+    while True:
+        try:
             data = scrape_flights()
             if data:
-                cache["data"] = data
-                cache["timestamp"] = now
-        return cache["data"]
+                with lock:
+                    cache["data"] = data
+                    cache["timestamp"] = time.time()
+        except Exception as e:
+            print(f"[WARN] flights worker: {e}")
+        time.sleep(CACHE_TTL)
+
+
+threading.Thread(target=_flights_worker, daemon=True).start()
 
 
 @app.route("/")
@@ -456,6 +482,313 @@ def radar_api():
                 "source": "flugumferd.is",
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# Eftirfylgni með stakri flugvél  (IATA flugnúmer -> ADS-B kallmerki)
+# ---------------------------------------------------------------------------
+
+# IATA flugfélagskóði -> ICAO kallmerkjaforskeyti (flugfélög sem fljúga um KEF)
+AIRLINE_ICAO = {
+    "FI": "ICE", "OG": "FPY", "DL": "DAL", "UA": "UAL", "AA": "AAL",
+    "BA": "BAW", "LH": "DLH", "SK": "SAS", "DY": "NOZ", "D8": "NSZ",
+    "W6": "WZZ", "EW": "EWG", "LX": "SWR", "KL": "KLM", "AF": "AFR",
+    "IB": "IBE", "TP": "TAP", "AY": "FIN", "OS": "AUA", "SN": "BEL",
+    "EI": "EIN", "TK": "THY", "VY": "VLG", "PC": "PGT", "WK": "EDW",
+    "LS": "EXS", "U2": "EZY", "FR": "RYR", "AC": "ACA", "TS": "TSC",
+    "WS": "WJA", "JL": "JAL", "NH": "ANA", "LO": "LOT", "AZ": "ITY",
+    "A3": "AEE", "SU": "AFL", "TU": "TAR", "MT": "TCX", "BY": "TOM",
+    "EJU": "EJU", "N0": "NOZ", "RC": "FLI", "NO": "NOS", "HV": "TRA",
+    "6B": "BLX", "QS": "TVS", "X3": "TUI", "DE": "CFG", "ET": "ETH",
+    "QR": "QTR", "EK": "UAE", "CX": "CPA", "5X": "UPS", "FX": "FDX",
+    "3S": "BOX", "QY": "BCS", "M6": "AJT", "GG": "CVA", "K4": "CKS",
+}
+
+_track_cache = {}
+_track_lock = threading.Lock()
+TRACK_TTL = 8  # sekúndur
+
+
+def _callsign_candidates(flight):
+    """Býr til líkleg ADS-B kallmerki út frá IATA flugnúmeri, t.d. FI672 -> ICE672."""
+    m = re.match(r"^\s*([A-Z0-9]{2,3}?)\s*0*(\d{1,4})\s*$", (flight or "").upper())
+    if not m:
+        return []
+    code, num = m.group(1), m.group(2)
+    icao = AIRLINE_ICAO.get(code, code)
+    out = []
+    for pfx in (icao, code):
+        for n in (num, num.zfill(3), num.zfill(4)):
+            cs = f"{pfx}{n}"
+            if cs not in out:
+                out.append(cs)
+    return out
+
+
+def _shape(ac, source, callsign):
+    """Sameiginlegt svarform fyrir báðar gagnaveitur."""
+    lat, lon = ac.get("lat"), ac.get("lon")
+    if lat is None or lon is None:
+        return None
+    alt = ac.get("alt_baro")
+    if isinstance(alt, str):  # "ground"
+        alt = 0
+    return {
+        "found": True,
+        "callsign": (ac.get("flight") or callsign or "").strip(),
+        "lat": lat,
+        "lon": lon,
+        "alt": alt,
+        "gs": ac.get("gs"),
+        "track": ac.get("track"),
+        "reg": ac.get("r"),
+        "type": ac.get("t"),
+        "vert": ac.get("baro_rate"),
+        "hex": (ac.get("hex") or "").upper() or None,
+        "source": source,
+    }
+
+
+def _find_local(cands):
+    """Leitar fyrst í beinu straumnum frá flugumferd.is (besta þekjan yfir N-Atlantshafi)."""
+    with radar_lock:
+        fleet = list(radar_state["aircraft"])
+    wanted = {c.upper() for c in cands}
+    for ac in fleet:
+        cs = (ac.get("flight") or "").strip().upper()
+        if cs and cs in wanted:
+            hit = _shape(ac, "flugumferd.is", cs)
+            if hit:
+                return hit
+    return None
+
+
+_GLOBAL_FEEDS = (
+    ("adsb.lol", "https://api.adsb.lol/v2/callsign/{cs}"),
+    ("adsb.fi", "https://opendata.adsb.fi/api/v2/callsign/{cs}"),
+)
+
+# Veitur sem svara hægt (t.d. vegna fyrirspurnamarka) eru hvíldar um stund.
+_feed_penalty = {}
+FEED_CONNECT_TIMEOUT = 2.0
+FEED_READ_TIMEOUT = 3.0
+
+
+def _feed_lookup(name, tmpl, cs):
+    if time.time() < _feed_penalty.get(name, 0):
+        return None
+    try:
+        r = requests.get(
+            tmpl.format(cs=cs),
+            timeout=(FEED_CONNECT_TIMEOUT, FEED_READ_TIMEOUT),
+            headers={"User-Agent": "kef-fids/1.0"},
+        )
+        if r.status_code != 200:
+            if r.status_code in (429, 403):
+                _feed_penalty[name] = time.time() + 300
+            return None
+        for ac in r.json().get("ac", []) or []:
+            hit = _shape(ac, name, cs)
+            if hit:
+                return hit
+    except requests.exceptions.RequestException:
+        _feed_penalty[name] = time.time() + 60
+    except Exception as e:
+        print(f"{name} lookup error for {cs}: {e}")
+    return None
+
+
+_feed_pool = ThreadPoolExecutor(max_workers=16)
+
+
+def _find_global(cands, deadline):
+    """Hnattrænar ADS-B veitur — samhliða fyrirspurnir með hörðum tímafresti."""
+    jobs = [(n, t, cs) for cs in cands[:2] for n, t in _GLOBAL_FEEDS]
+    if not jobs:
+        return None
+    futures = [_feed_pool.submit(_feed_lookup, *j) for j in jobs]
+    for f in futures:
+        try:
+            hit = f.result(timeout=max(0.05, deadline - time.time()))
+        except Exception:
+            continue
+        if hit:
+            return hit
+    return None
+
+
+# --- OpenSky: breið þekja yfir Atlantshafi/N-Ameríku, sótt í bakgrunni ---
+_OPENSKY_BBOX = "lamin=30&lomin=-145&lamax=80&lomax=45"
+_opensky_by_cs = {}
+_opensky_lock = threading.Lock()
+OPENSKY_PERIOD = 420  # sek — virðir fyrirspurnamörk ókeypis aðgangs
+
+
+def _opensky_worker():
+    """Sækir heildarmynd frá OpenSky reglulega. Ekkert kall gerist inni í fyrirspurn."""
+    global _opensky_by_cs
+    while True:
+        try:
+            r = requests.get(
+                f"https://opensky-network.org/api/states/all?{_OPENSKY_BBOX}",
+                timeout=(5, 20),
+                headers={"User-Agent": "kef-fids/1.0"},
+            )
+            if r.status_code == 200:
+                by_cs = {}
+                for s in r.json().get("states") or []:
+                    cs = (s[1] or "").strip().upper()
+                    if not cs or s[5] is None or s[6] is None:
+                        continue
+                    alt_m = s[13] if s[13] is not None else s[7]
+                    by_cs[cs] = {
+                        "lat": s[6],
+                        "lon": s[5],
+                        "alt_baro": round(alt_m * 3.28084) if alt_m is not None else None,
+                        "gs": round(s[9] * 1.94384, 1) if s[9] is not None else None,
+                        "track": s[10],
+                        "baro_rate": round(s[11] * 196.85) if s[11] is not None else None,
+                        "flight": cs,
+                        "hex": (s[0] or "").upper(),
+                        "r": None,
+                        "t": None,
+                    }
+                with _opensky_lock:
+                    _opensky_by_cs = by_cs
+        except Exception as e:
+            print(f"opensky error: {e}")
+        time.sleep(OPENSKY_PERIOD)
+
+
+threading.Thread(target=_opensky_worker, daemon=True).start()
+
+
+def _find_opensky(cands):
+    """Uppfletting í minni — tekur örskotsstund."""
+    with _opensky_lock:
+        snap = _opensky_by_cs
+    for cs in cands:
+        ac = snap.get(cs.upper())
+        if ac:
+            hit = _shape(ac, "opensky", cs)
+            if hit:
+                return hit
+    return None
+
+
+# Síðasta þekkta staðsetning — brúar ADS-B eyðuna yfir miðju Atlantshafi.
+_last_seen = {}
+LAST_SEEN_MAX_AGE = 3 * 3600
+
+# Vaktlisti: flug sem notandinn hefur opnað nýlega eru uppfærð í bakgrunni,
+# svo svörin liggja tilbúin í minni þegar smellt er.
+_watch = {}
+WATCH_TTL = 300          # hættum að fylgjast með 5 mín eftir síðasta smell
+TRACK_FRESH = 20         # sek — hversu gamalt svar má vera og teljast ferskt
+TRACK_WORKER_PERIOD = 6  # sek milli bakgrunnsuppfærslna
+FIRST_HIT_DEADLINE = 3.0  # sek — hámarksbið við allra fyrsta smell
+
+
+# Skrásetningarnúmer/vélargerð fyrir vélar sem OpenSky þekkir ekki (sótt í bakgrunni).
+_hex_cache = {}
+
+
+def _hex_fetch(hx):
+    try:
+        r = requests.get(
+            f"https://hexdb.io/api/v1/aircraft/{hx}",
+            timeout=(2, 4),
+            headers={"User-Agent": "kef-fids/1.0"},
+        )
+        d = r.json() if r.status_code == 200 else {}
+        _hex_cache[hx] = (d.get("Registration"), d.get("ICAOTypeCode"))
+    except Exception:
+        _hex_cache[hx] = (None, None)
+
+
+def _enrich(result):
+    """Bætir við skrásetningu/gerð úr minni; sækir í bakgrunni ef vantar."""
+    hx = result.get("hex")
+    if not hx or (result.get("reg") and result.get("type")):
+        return result
+    got = _hex_cache.get(hx)
+    if got is None:
+        _feed_pool.submit(_hex_fetch, hx)  # bíðum ekki — kemur í næstu uppfærslu
+        return result
+    reg, typ = got
+    result["reg"] = result.get("reg") or reg
+    result["type"] = result.get("type") or typ
+    return result
+
+
+def _resolve(key, cands, deadline):
+    """Finnur staðsetningu: fyrst í minni, svo hnattrænar veitur ef tími leyfir."""
+    result = _find_local(cands) or _find_opensky(cands)
+    if not result and time.time() < deadline:
+        result = _find_global(cands, deadline)
+
+    now = time.time()
+    if result:
+        _enrich(result)
+        with _track_lock:
+            if len(_last_seen) > 500:
+                _last_seen.clear()
+            _last_seen[key] = (now, dict(result))
+    else:
+        with _track_lock:
+            prev = _last_seen.get(key)
+        if prev and now - prev[0] < LAST_SEEN_MAX_AGE:
+            result = dict(prev[1])
+            result["stale"] = True
+            result["age_min"] = int((now - prev[0]) / 60)
+        else:
+            result = {"found": False, "reason": "not_airborne", "tried": cands[:3]}
+    result["anr"] = f"https://www.airnavradar.com/flight/{key}"
+
+    with _track_lock:
+        if len(_track_cache) > 500:
+            _track_cache.clear()
+        _track_cache[key] = (now, result)
+    return result
+
+
+def _track_worker():
+    """Heldur vöktuðum flugum ferskum í bakgrunni."""
+    while True:
+        now = time.time()
+        with _track_lock:
+            for k, (ts, _) in list(_watch.items()):
+                if now - ts > WATCH_TTL:
+                    _watch.pop(k, None)
+            jobs = [(k, c) for k, (ts, c) in _watch.items()]
+        for key, cands in jobs:
+            try:
+                _resolve(key, cands, time.time() + 5)
+            except Exception as e:
+                print(f"track worker {key}: {e}")
+        time.sleep(TRACK_WORKER_PERIOD)
+
+
+threading.Thread(target=_track_worker, daemon=True).start()
+
+
+@app.route("/api/track/<flight>")
+def track_api(flight):
+    """Staðsetning einnar flugvélar eftir flugnúmeri — svarar úr minni."""
+    key = (flight or "").upper().strip()
+    cands = _callsign_candidates(key)
+    if not cands:
+        return jsonify({"found": False, "reason": "bad_flight"})
+
+    now = time.time()
+    with _track_lock:
+        _watch[key] = (now, cands)
+        hit = _track_cache.get(key)
+        if hit and now - hit[0] < TRACK_FRESH:
+            return jsonify(hit[1])
+
+    # Fyrsta uppfletting: stutt, afmörkuð leit. Bakgrunnsþráðurinn sér um framhaldið.
+    return jsonify(_resolve(key, cands, now + FIRST_HIT_DEADLINE))
 
 
 _TILE_STYLES = {"dark_all", "light_all", "dark_nolabels", "light_nolabels"}
